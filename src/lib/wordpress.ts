@@ -99,33 +99,74 @@ export async function setSiteLogo(creds: WpCredentials, mediaId: number): Promis
 /**
  * Update Elementor global colours and typography via the individual globals endpoints.
  *
- * Uses POST /elementor/v1/globals/colors/{id} and
- *      POST /elementor/v1/globals/typography/{id}
- * which are confirmed present in wp-json for this Elementor setup.
+ * Strategy: GET the existing globals first to discover the real IDs of the default
+ * system entries (Elementor stores them with hashed IDs, not "primary"/"secondary").
+ * Match by title, update in-place. If no match is found, fall back to creating a
+ * new entry using the caller-supplied ID.
  */
 export async function updateElementorGlobals(
   creds: WpCredentials,
   colors: ElementorColor[],
   typography: ElementorTypography[],
 ): Promise<void> {
+  // ------------------------------------------------------------------
+  // Colours
+  // ------------------------------------------------------------------
+  let existingColors: Array<{ id: string; title: string }> = [];
+  try {
+    const listRes = await wpFetch(creds, '/elementor/v1/globals/colors');
+    if (listRes.ok) {
+      const data = await listRes.json();
+      // Response may be an object keyed by ID or an array
+      existingColors = Array.isArray(data)
+        ? data
+        : Object.values(data as Record<string, { id: string; title: string }>);
+    }
+  } catch { /* non-fatal — fall back to caller IDs */ }
+
   for (const color of colors) {
-    const res = await wpFetch(creds, `/elementor/v1/globals/colors/${encodeURIComponent(color._id)}`, {
+    // Try to find an existing system color whose title matches (case-insensitive)
+    const existing = existingColors.find(
+      (c) => c.title.toLowerCase() === color.title.toLowerCase(),
+    );
+    const targetId = existing?.id ?? color._id;
+
+    const res = await wpFetch(creds, `/elementor/v1/globals/colors/${encodeURIComponent(targetId)}`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ id: color._id, title: color.title, value: { color: color.color } }),
+      body: JSON.stringify({ id: targetId, title: color.title, value: { color: color.color } }),
     });
     if (!res.ok) {
       const text = await res.text();
-      throw new Error(`Update Elementor color "${color._id}" failed (${res.status}): ${text}`);
+      throw new Error(`Update Elementor color "${color.title}" failed (${res.status}): ${text}`);
     }
   }
 
+  // ------------------------------------------------------------------
+  // Typography
+  // ------------------------------------------------------------------
+  let existingTypo: Array<{ id: string; title: string }> = [];
+  try {
+    const listRes = await wpFetch(creds, '/elementor/v1/globals/typography');
+    if (listRes.ok) {
+      const data = await listRes.json();
+      existingTypo = Array.isArray(data)
+        ? data
+        : Object.values(data as Record<string, { id: string; title: string }>);
+    }
+  } catch { /* non-fatal */ }
+
   for (const typo of typography) {
-    const res = await wpFetch(creds, `/elementor/v1/globals/typography/${encodeURIComponent(typo._id)}`, {
+    const existing = existingTypo.find(
+      (t) => t.title.toLowerCase() === typo.title.toLowerCase(),
+    );
+    const targetId = existing?.id ?? typo._id;
+
+    const res = await wpFetch(creds, `/elementor/v1/globals/typography/${encodeURIComponent(targetId)}`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        id: typo._id,
+        id: targetId,
         title: typo.title,
         value: {
           typography: typo.typography_typography,
@@ -136,7 +177,7 @@ export async function updateElementorGlobals(
     });
     if (!res.ok) {
       const text = await res.text();
-      throw new Error(`Update Elementor typography "${typo._id}" failed (${res.status}): ${text}`);
+      throw new Error(`Update Elementor typography "${typo.title}" failed (${res.status}): ${text}`);
     }
   }
 }
