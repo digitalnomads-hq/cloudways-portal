@@ -2,7 +2,7 @@ import { NextRequest } from 'next/server';
 import { cloneApp, waitForClone, restartNginxAndWait } from '@/lib/cloudways';
 import { configureWordPress } from '@/lib/wordpress';
 import type { ElementorColor, ElementorTypography } from '@/lib/wordpress';
-import { isSshConfigured, updateAllPlugins } from '@/lib/ssh';
+import { checkPluginUpdates } from '@/lib/wordpress';
 import { deleteDefaultContent, createStandardPages, configureSiteSettings, createNavMenu } from '@/lib/wp-setup';
 import { sendSiteSummary } from '@/lib/email';
 
@@ -84,14 +84,14 @@ export async function POST(req: NextRequest) {
         }
 
         // ----------------------------------------------------------------
-        // 2. Update plugins on template (if SSH configured)
+        // 2. Check plugins on template for available updates
         // ----------------------------------------------------------------
-        if (isSshConfigured()) {
-          send('status', { step: 2, message: 'Updating plugins on template site…' });
-          await updateAllPlugins((msg) => send('status', { step: 2, message: msg }));
-        } else {
-          send('status', { step: 2, message: 'SSH not configured — skipping plugin updates.' });
-        }
+        const templateCreds = {
+          baseUrl: process.env.TEMPLATE_WP_URL!,
+          username: process.env.TEMPLATE_WP_USERNAME!,
+          appPassword: process.env.TEMPLATE_WP_APP_PASSWORD!,
+        };
+        await checkPluginUpdates(templateCreds, (msg) => send('status', { step: 2, message: msg }));
 
         // ----------------------------------------------------------------
         // 3. Clone

@@ -141,6 +141,36 @@ export async function updateElementorGlobals(
   }
 }
 
+/**
+ * Check for plugins with available updates via the WP REST API.
+ * Returns the names of plugins that need updating.
+ * Note: the WP REST API does not support triggering version updates —
+ * updates must be applied manually in WP Admin or via WP-CLI.
+ */
+export async function checkPluginUpdates(
+  creds: WpCredentials,
+  onStep: (msg: string) => void,
+): Promise<void> {
+  onStep('Checking template site for plugin updates…');
+
+  const res = await wpFetch(creds, '/wp/v2/plugins?context=edit&per_page=100');
+  if (!res.ok) {
+    onStep(`  Could not retrieve plugin list (${res.status}) — skipping check`);
+    return;
+  }
+
+  const plugins: Array<{ name: string; plugin: string; version: string; update?: unknown }> = await res.json();
+  const needsUpdate = plugins.filter((p) => p.update && p.update !== null && p.update !== false);
+
+  if (needsUpdate.length === 0) {
+    onStep('  All plugins are up to date.');
+  } else {
+    const names = needsUpdate.map((p) => p.name).join(', ');
+    onStep(`  ⚠ ${needsUpdate.length} plugin${needsUpdate.length === 1 ? '' : 's'} need updating: ${names}`);
+    onStep('  Update these in WP Admin → Plugins on the template site before cloning for best results.');
+  }
+}
+
 /** Run all WordPress configuration steps in sequence. */
 export async function configureWordPress(
   creds: WpCredentials,
