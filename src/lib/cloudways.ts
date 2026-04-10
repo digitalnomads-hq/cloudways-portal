@@ -175,14 +175,8 @@ export async function restartNginxAndWait(
       onProgress?.(`Nginx restart API call failed (${res.status}: ${text}) — will poll until site responds.`);
     } else {
       const data = await res.json();
-      const operationId = data.operation_id ?? data.operation?.id;
-      if (operationId) {
-        onProgress?.('Nginx restart triggered — waiting for operation to complete…');
-        await waitForOperation(String(operationId), onProgress, 3000, 60000);
-        onProgress?.('Nginx restarted.');
-      } else {
-        onProgress?.('Nginx restart triggered.');
-      }
+      const status = data.service_status?.status;
+      onProgress?.(`Nginx restarted${status ? ` (${status})` : ''}.`);
     }
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
