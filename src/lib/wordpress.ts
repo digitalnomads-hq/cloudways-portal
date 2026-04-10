@@ -101,6 +101,29 @@ interface ElementorKitData {
   [key: string]: unknown;
 }
 
+/** Ensure Elementor is active — activate it via the WP plugins REST API if needed. */
+async function ensureElementorActive(creds: WpCredentials): Promise<void> {
+  // Check plugin status
+  const listRes = await wpFetch(creds, '/wp/v2/plugins?search=elementor');
+  if (!listRes.ok) return; // Can't check — proceed anyway
+
+  const plugins: Array<{ plugin: string; status: string; name: string }> = await listRes.json();
+  const elementor = plugins.find((p) => p.plugin.startsWith('elementor/'));
+  if (!elementor) return; // Not found — nothing to activate
+
+  if (elementor.status === 'active') return; // Already active
+
+  // Activate it
+  await wpFetch(creds, `/wp/v2/plugins/${encodeURIComponent(elementor.plugin)}`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ status: 'active' }),
+  });
+
+  // Give WordPress a moment to finish activating
+  await new Promise((r) => setTimeout(r, 3000));
+}
+
 async function getKitData(creds: WpCredentials): Promise<ElementorKitData> {
   const res = await wpFetch(creds, '/elementor/v1/kit-data');
   if (!res.ok) throw new Error(`Get Elementor kit failed (${res.status}): ${await res.text()}`);
@@ -110,41 +133,46 @@ async function getKitData(creds: WpCredentials): Promise<ElementorKitData> {
 /**
  * Update Elementor global colours and typography via the Elementor REST API.
  *
- * Elementor stores these in the "Site Kit" post under `system_colors` and
- * `system_typography`. We read the current kit, patch only those keys, then
- * write it back.
+ * If the kit endpoint returns 404, Elementor is likely inactive on the clone —
+ * we activate it via the WP plugins API then retry once.
  */
 export async function updateElementorGlobals(
   creds: WpCredentials,
   colors: ElementorColor[],
   typography: ElementorTypography[],
 ): Promise<void> {
-  // Read current kit so we don't clobber unrelated settings
-  const kitData = await getKitData(creds);
+  const applyKit = async (): Promise<void> => {
+    const kitData = await getKitData(creds);
 
-  const updatedSettings = {
-    ...kitData.settings,
-    system_colors: colors,
-    system_typography: typography,
+    const updatedSettings = {
+      ...kitData.settings,
+      system_colors: colors,
+      system_typography: typography,
+    };
+
+    const res = await wpFetch(creds, '/elementor/v1/kit-data', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ settings: updatedSettings }),
+    });
+
+    if (!res.ok) {
+      const text = await res.text();
+      throw new Error(`Update Elementor kit failed (${res.status}): ${text}`);
+    }
   };
 
-  // Elementor's kit-data endpoint accepts POST to update
-  const res = await wpFetch(creds, '/elementor/v1/kit-data', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ settings: updatedSettings }),
-  });
-
-  if (!res.ok) {
-    const text = await res.text();
-    // Provide a useful hint if the endpoint isn't found — common if Elementor
-    // is not activated on the fresh clone yet.
-    if (res.status === 404) {
-      throw new Error(
-        `Elementor kit endpoint not found (404). Make sure Elementor is active on the cloned site before configuring globals. Raw: ${text}`,
-      );
+  try {
+    await applyKit();
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    if (msg.includes('404')) {
+      // Elementor likely inactive — activate and retry once
+      await ensureElementorActive(creds);
+      await applyKit();
+    } else {
+      throw err;
     }
-    throw new Error(`Update Elementor kit failed (${res.status}): ${text}`);
   }
 }
 
