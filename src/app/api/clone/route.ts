@@ -2,8 +2,8 @@ import { NextRequest } from 'next/server';
 import { cloneApp, waitForClone, restartNginxAndWait } from '@/lib/cloudways';
 import { configureWordPress } from '@/lib/wordpress';
 import type { ElementorColor, ElementorTypography } from '@/lib/wordpress';
-import { isSshConfigured, updateAllPlugins, clonedWpPath, setPermalinkStructure, discourageSearchIndexing, createNavMenu } from '@/lib/ssh';
-import { deleteDefaultContent, createStandardPages, configureSiteSettings } from '@/lib/wp-setup';
+import { isSshConfigured, updateAllPlugins } from '@/lib/ssh';
+import { deleteDefaultContent, createStandardPages, configureSiteSettings, createNavMenu } from '@/lib/wp-setup';
 import { sendSiteSummary } from '@/lib/email';
 
 // ---------------------------------------------------------------------------
@@ -154,26 +154,19 @@ export async function POST(req: NextRequest) {
         await configureSiteSettings(wpCreds, pages.home, (msg) => send('status', { step: 9, message: msg }));
 
         // ----------------------------------------------------------------
-        // 10. WP-CLI: permalinks, indexing, nav menu (if SSH configured)
+        // 10. Nav menu via REST API
         // ----------------------------------------------------------------
-        if (isSshConfigured()) {
-          const newWpPath = clonedWpPath(newApp.sys_user);
-
-          send('status', { step: 10, message: 'Running WP-CLI setup on new site…' });
-
-          await setPermalinkStructure(newWpPath, (msg) => send('status', { step: 10, message: msg }));
-          await discourageSearchIndexing(newWpPath, (msg) => send('status', { step: 10, message: msg }));
-
-          const menuPages = [
+        send('status', { step: 10, message: 'Setting up navigation menu…' });
+        await createNavMenu(
+          wpCreds,
+          [
             { title: 'Home',     id: pages.home },
             { title: 'About',    id: pages.about },
             { title: 'Services', id: pages.services },
             { title: 'Contact',  id: pages.contact },
-          ];
-          await createNavMenu(newWpPath, menuPages, (msg) => send('status', { step: 10, message: msg }));
-        } else {
-          send('status', { step: 10, message: 'SSH not configured — skipping permalinks, indexing & nav menu setup.' });
-        }
+          ],
+          (msg) => send('status', { step: 10, message: msg }),
+        );
 
         // ----------------------------------------------------------------
         // 11. Send summary email (if SMTP configured and email provided)

@@ -1,5 +1,7 @@
 import type { WpCredentials } from './wordpress';
 
+export interface NavPage { title: string; id: number; }
+
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
@@ -68,6 +70,7 @@ export async function configureSiteSettings(
     default_ping_status: 'closed',     // disable pingbacks
     show_on_front: 'page',
     page_on_front: homePageId,
+    blog_public: false,                // discourage search engine indexing
   };
 
   const res = await wpFetch(creds, '/wp/v2/settings', {
@@ -82,7 +85,61 @@ export async function configureSiteSettings(
     onStep('  Timezone set to Australia/Sydney');
     onStep('  Comments and pingbacks disabled');
     onStep('  Front page set to Home');
+    onStep('  Search engine indexing discouraged (re-enable before launch)');
   }
+}
+
+// ---------------------------------------------------------------------------
+// 4. Navigation menu
+// ---------------------------------------------------------------------------
+
+export async function createNavMenu(
+  creds: WpCredentials,
+  pages: NavPage[],
+  onStep: (msg: string) => void,
+): Promise<void> {
+  onStep('Creating navigation menu…');
+
+  const menuRes = await wpFetch(creds, '/wp/v2/menus', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ name: 'Primary Menu' }),
+  });
+
+  if (!menuRes.ok) {
+    onStep(`  Could not create menu (${menuRes.status}) — skipping`);
+    return;
+  }
+
+  const menu = await menuRes.json();
+  const menuId: number = menu.id;
+
+  for (const page of pages) {
+    const itemRes = await wpFetch(creds, '/wp/v2/menu-items', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        title: page.title,
+        type: 'post_type',
+        object: 'page',
+        object_id: page.id,
+        menus: menuId,
+        status: 'publish',
+      }),
+    });
+    onStep(itemRes.ok ? `  Added "${page.title}" to menu` : `  Could not add "${page.title}" (${itemRes.status})`);
+  }
+
+  // Attempt to assign to the primary theme location
+  const assignRes = await wpFetch(creds, `/wp/v2/menus/${menuId}`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ locations: ['primary'] }),
+  });
+  onStep(assignRes.ok
+    ? '  Assigned to primary menu location'
+    : '  Could not auto-assign menu location — assign manually in Appearance → Menus',
+  );
 }
 
 // ---------------------------------------------------------------------------
