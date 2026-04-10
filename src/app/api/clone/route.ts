@@ -86,12 +86,16 @@ export async function POST(req: NextRequest) {
         // ----------------------------------------------------------------
         // 2. Check plugins on template for available updates
         // ----------------------------------------------------------------
-        const templateCreds = {
-          baseUrl: process.env.TEMPLATE_WP_URL!,
-          username: process.env.TEMPLATE_WP_USERNAME!,
-          appPassword: process.env.TEMPLATE_WP_APP_PASSWORD!,
-        };
-        await checkPluginUpdates(templateCreds, (msg) => send('status', { step: 2, message: msg }));
+        if (process.env.TEMPLATE_WP_URL) {
+          const templateCreds = {
+            baseUrl: process.env.TEMPLATE_WP_URL,
+            username: process.env.TEMPLATE_WP_USERNAME!,
+            appPassword: process.env.TEMPLATE_WP_APP_PASSWORD!,
+          };
+          await checkPluginUpdates(templateCreds, (msg) => send('status', { step: 2, message: msg }));
+        } else {
+          send('status', { step: 2, message: 'TEMPLATE_WP_URL not set — skipping plugin check.' });
+        }
 
         // ----------------------------------------------------------------
         // 3. Clone
