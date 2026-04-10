@@ -157,7 +157,7 @@ export async function restartNginxAndWait(
   try {
     const token = await getAccessToken();
 
-    const res = await fetch(`${API_BASE}/service`, {
+    const res = await fetch(`${API_BASE}/service/state`, {
       method: 'POST',
       headers: {
         ...authHeaders(token),
@@ -165,7 +165,7 @@ export async function restartNginxAndWait(
       },
       body: new URLSearchParams({
         server_id: process.env.CLOUDWAYS_SERVER_ID!,
-        service_type: 'nginx',
+        service: 'nginx',
         state: 'restart',
       }),
     });
