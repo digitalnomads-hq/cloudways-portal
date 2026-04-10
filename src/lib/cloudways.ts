@@ -157,27 +157,42 @@ export async function restartNginxAndWait(
   try {
     const token = await getAccessToken();
 
-    const res = await fetch(`${API_BASE}/service/state`, {
-      method: 'POST',
-      headers: {
-        ...authHeaders(token),
-        'Content-Type': 'application/x-www-form-urlencoded',
-      },
-      body: new URLSearchParams({
-        server_id: process.env.CLOUDWAYS_SERVER_ID!,
-        service: 'nginx',
-        state: 'restart',
-      }),
-    });
+    const attemptRestart = async (): Promise<void> => {
+      const res = await fetch(`${API_BASE}/service/state`, {
+        method: 'POST',
+        headers: {
+          ...authHeaders(token),
+          'Content-Type': 'application/x-www-form-urlencoded',
+        },
+        body: new URLSearchParams({
+          server_id: process.env.CLOUDWAYS_SERVER_ID!,
+          service: 'nginx',
+          state: 'restart',
+        }),
+      });
 
-    if (!res.ok) {
-      const text = await res.text();
-      onProgress?.(`Nginx restart API call failed (${res.status}: ${text}) — will poll until site responds.`);
-    } else {
-      const data = await res.json();
-      const status = data.service_status?.status;
-      onProgress?.(`Nginx restarted${status ? ` (${status})` : ''}.`);
-    }
+      if (res.status === 422) {
+        const data = await res.json();
+        const blockingOpId = data.operation?.id;
+        if (blockingOpId) {
+          onProgress?.(`Waiting for ongoing operation to finish before restarting Nginx…`);
+          await waitForOperation(String(blockingOpId), onProgress, 5000, 5 * 60 * 1000);
+          onProgress?.('Retrying Nginx restart…');
+          return attemptRestart();
+        }
+      }
+
+      if (!res.ok) {
+        const text = await res.text();
+        onProgress?.(`Nginx restart API call failed (${res.status}: ${text}) — will poll until site responds.`);
+      } else {
+        const data = await res.json();
+        const status = data.service_status?.status;
+        onProgress?.(`Nginx restarted${status ? ` (${status})` : ''}.`);
+      }
+    };
+
+    await attemptRestart();
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     onProgress?.(`Nginx restart failed (${msg}) — will poll until site responds.`);
