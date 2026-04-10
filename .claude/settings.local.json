@@ -1,7 +1,32 @@
 {
   "permissions": {
     "allow": [
-      "Bash(npx create-next-app@latest . --typescript --tailwind --eslint --app --src-dir --import-alias \"@/*\" --no-turbopack)"
+      "Bash(npx create-next-app@latest . --typescript --tailwind --eslint --app --src-dir --import-alias \"@/*\" --no-turbopack)",
+      "Bash(npx tsc:*)",
+      "Bash(npm install:*)",
+      "Bash(npm run:*)",
+      "Bash(curl -s -o /dev/null -w \"%{http_code}\" http://localhost:3000/login)",
+      "Bash(curl -s -b \"portal_auth=$\\(grep PORTAL_SECRET .env.local)",
+      "Bash(python3 -c \"import sys,json; d=json.load\\(sys.stdin\\); print\\(f'{len\\(d[\\\\\"fonts\\\\\"]\\)} fonts, first 5: {d[\\\\\"fonts\\\\\"][:5]}'\\)\")",
+      "Bash(python3 -c \"import sys,json; [print\\(c['name'],'-',c['message']\\) for c in json.load\\(sys.stdin\\)['checks']]\")",
+      "Bash(curl -s -X POST https://api.cloudways.com/api/v1/oauth/access_token -d email=__CMDSUB_OUTPUT__)",
+      "Bash(python3 -c \"import sys,json; d=json.load\\(sys.stdin\\); print\\(list\\(d.keys\\(\\)\\)\\); ops=d.get\\('operations',[]\\); print\\(ops[:2] if ops else 'no ops key'\\)\")",
+      "Bash(ssh -i /Users/niknieuwenhuis/.ssh/id_rsa -o StrictHostKeyChecking=no master_zuajuugacf@134.199.168.196 \"find /var/www/vhosts -maxdepth 2 -name 'wp-config.php' 2>/dev/null\")",
+      "Bash(ssh -i /Users/niknieuwenhuis/.ssh/id_rsa -o StrictHostKeyChecking=no -o ConnectTimeout=10 master_zuajuugacf@134.199.168.196 \"find /var/www -maxdepth 3 -name 'wp-config.php' 2>/dev/null | head -5; echo '---'; ls /var/www/\")",
+      "Bash(ssh -i /Users/niknieuwenhuis/.ssh/id_rsa -o StrictHostKeyChecking=no -o ConnectTimeout=10 master_zuajuugacf@134.199.168.196 \"find / -maxdepth 5 -name 'wp-config.php' 2>/dev/null | head -10\")",
+      "Bash(ssh -i /Users/niknieuwenhuis/.ssh/id_rsa -o StrictHostKeyChecking=no master_zuajuugacf@134.199.168.196 'grep -r '\\\\''wordpress-1453465-6337488\\\\|WP Starter'\\\\'' /home/1453465.cloudwaysapps.com/*/public_html/wp-config.php 2>/dev/null | head -3; \\\\:*)",
+      "Bash(ssh -i /Users/niknieuwenhuis/.ssh/id_rsa -o StrictHostKeyChecking=no master_zuajuugacf@134.199.168.196 'grep -rl '\\\\''6337488\\\\|wordpress-1453465-6337488'\\\\'' /home/1453465.cloudwaysapps.com/ 2>/dev/null | grep -v '\\\\''.log'\\\\'' | head -5')",
+      "Bash(ssh -i /Users/niknieuwenhuis/.ssh/id_rsa -o StrictHostKeyChecking=no master_zuajuugacf@134.199.168.196 'grep -r '\\\\''wordpress-1453465-6337488'\\\\'' /etc/nginx/ 2>/dev/null | grep root | head -3')",
+      "Bash(ssh -i /Users/niknieuwenhuis/.ssh/id_rsa -o StrictHostKeyChecking=no master_zuajuugacf@134.199.168.196 'grep -rl '\\\\''wordpress-1453465-6337488'\\\\'' /etc/nginx/ 2>/dev/null | head -3 | xargs grep -A2 '\\\\''root'\\\\'' 2>/dev/null | head -10')",
+      "Bash(ssh -i /Users/niknieuwenhuis/.ssh/id_rsa -o StrictHostKeyChecking=no master_zuajuugacf@134.199.168.196 'ls /etc/nginx/conf.d/ 2>/dev/null | grep -i 6337488; \\\\:*)",
+      "Bash(ssh -i /Users/niknieuwenhuis/.ssh/id_rsa -o StrictHostKeyChecking=no master_zuajuugacf@134.199.168.196 'wp --path=/home/1453465.cloudwaysapps.com/aqfjyrkpxz/public_html option get siteurl --allow-root 2>/dev/null')",
+      "Bash(ssh -i /Users/niknieuwenhuis/.ssh/id_rsa -o StrictHostKeyChecking=no master_zuajuugacf@134.199.168.196 'ls /home/1453465.cloudwaysapps.com/ | wc -l')",
+      "Bash(ssh -i /Users/niknieuwenhuis/.ssh/id_rsa -o StrictHostKeyChecking=no master_zuajuugacf@134.199.168.196 'ls /home/1453465.cloudwaysapps.com/cfuywjzqua/public_html/wp-config.php 2>/dev/null && echo EXISTS')",
+      "Bash(ssh -i /Users/niknieuwenhuis/.ssh/id_rsa -o StrictHostKeyChecking=no master_zuajuugacf@134.199.168.196 'sudo -n -l 2>&1 | grep -i nginx; echo '\\\\''---'\\\\''; sudo -n service nginx reload 2>&1; echo '\\\\''---'\\\\''; sudo -n nginx -s reload 2>&1')",
+      "Bash(ssh -i /Users/niknieuwenhuis/.ssh/id_rsa -o StrictHostKeyChecking=no master_zuajuugacf@134.199.168.196 'sudo -n -l 2>&1 | head -30')",
+      "Bash(ssh -i /Users/niknieuwenhuis/.ssh/id_rsa -o StrictHostKeyChecking=no master_zuajuugacf@134.199.168.196 'id; ls /usr/local/bin/cw* 2>/dev/null; find /usr/local/bin /opt -name '\\\\''*nginx*'\\\\'' -o -name '\\\\''*reload*'\\\\'' 2>/dev/null | head -10')",
+      "Bash(ssh -i /Users/niknieuwenhuis/.ssh/id_rsa -o StrictHostKeyChecking=no master_zuajuugacf@134.199.168.196 'cwutil --help 2>&1 | head -30; echo '\\\\''==='\\\\''; cwutil list 2>&1 | head -20')",
+      "WebFetch(domain:www.cloudways.com)"
     ]
   }
 }
