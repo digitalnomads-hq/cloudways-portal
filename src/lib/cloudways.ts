@@ -144,42 +144,52 @@ export async function waitForOperation(
 }
 
 /**
- * Restart Nginx, then confirm the site is reachable.
- *
- * Nginx restart requires passwordless sudo for the master user.
- * Set it up once via the Cloudways root terminal:
- *   echo "master_zuajuugacf ALL=(ALL) NOPASSWD: /usr/sbin/service nginx restart" \
- *     | sudo tee /etc/sudoers.d/cloudways-nginx && chmod 440 /etc/sudoers.d/cloudways-nginx
- *
- * If sudo isn't configured we fall back to polling until the site responds on its own.
+ * Restart Nginx via the Cloudways API, then confirm the site is reachable.
+ * Endpoint: POST /service  { server_id, service_type: "nginx", state: "restart" }
+ * Returns an operation ID which we poll until complete.
  */
 export async function restartNginxAndWait(
   siteUrl: string,
   onProgress?: (message: string) => void,
 ): Promise<void> {
-  const { isSshConfigured, runSshCommand } = await import('./ssh');
+  onProgress?.('Restarting Nginx via Cloudways API…');
 
-  if (isSshConfigured()) {
-    onProgress?.('Restarting Nginx…');
-    try {
-      await runSshCommand('sudo -n service nginx restart');
-      onProgress?.('Nginx restarted.');
-    } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err);
-      if (msg.includes('password') || msg.includes('sudoers')) {
-        onProgress?.(
-          'Nginx restart skipped — passwordless sudo not configured. ' +
-          'Run this once in the Cloudways root terminal to enable it:\n' +
-          `  echo "${process.env.SSH_USER} ALL=(ALL) NOPASSWD: /usr/sbin/service nginx restart" | sudo tee /etc/sudoers.d/cloudways-nginx && chmod 440 /etc/sudoers.d/cloudways-nginx`
-        );
+  try {
+    const token = await getAccessToken();
+
+    const res = await fetch(`${API_BASE}/service`, {
+      method: 'POST',
+      headers: {
+        ...authHeaders(token),
+        'Content-Type': 'application/x-www-form-urlencoded',
+      },
+      body: new URLSearchParams({
+        server_id: process.env.CLOUDWAYS_SERVER_ID!,
+        service_type: 'nginx',
+        state: 'restart',
+      }),
+    });
+
+    if (!res.ok) {
+      const text = await res.text();
+      onProgress?.(`Nginx restart API call failed (${res.status}: ${text}) — will poll until site responds.`);
+    } else {
+      const data = await res.json();
+      const operationId = data.operation_id ?? data.operation?.id;
+      if (operationId) {
+        onProgress?.('Nginx restart triggered — waiting for operation to complete…');
+        await waitForOperation(String(operationId), onProgress, 3000, 60000);
+        onProgress?.('Nginx restarted.');
       } else {
-        onProgress?.(`Nginx restart failed (${msg}) — will poll until site responds.`);
+        onProgress?.('Nginx restart triggered.');
       }
     }
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    onProgress?.(`Nginx restart failed (${msg}) — will poll until site responds.`);
   }
 
-  // Always poll until the site actually responds — confirms the vhost is live
-  // regardless of whether the restart succeeded.
+  // Always confirm the site is actually reachable before continuing
   await waitForSiteReachable(siteUrl, onProgress);
 }
 
