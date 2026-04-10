@@ -206,5 +206,11 @@ export async function configureWordPress(
   }
 
   onStep('Updating Elementor global colours and fonts…');
-  await updateElementorGlobals(creds, params.colors, params.typography);
+  try {
+    await updateElementorGlobals(creds, params.colors, params.typography);
+    onStep('  Elementor globals updated.');
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    throw new Error(`Elementor: ${msg}`);
+  }
 }

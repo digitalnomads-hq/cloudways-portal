@@ -129,11 +129,20 @@ export async function POST(req: NextRequest) {
         };
 
         send('status', { step: 6, message: 'Configuring branding…' });
-        await configureWordPress(
-          wpCreds,
-          { title: siteName, tagline, logoBuffer, logoFilename, logoMimeType, colors, typography },
-          (msg) => send('status', { step: 6, message: msg }),
-        );
+        try {
+          await configureWordPress(
+            wpCreds,
+            { title: siteName, tagline, logoBuffer, logoFilename, logoMimeType, colors, typography },
+            (msg) => send('status', { step: 6, message: msg }),
+          );
+        } catch (err) {
+          const msg = err instanceof Error ? err.message : String(err);
+          if (msg.includes('Elementor')) {
+            send('status', { step: 6, message: `⚠ Elementor globals not set (${msg.slice(0, 120)}) — set colours/fonts manually in Elementor → Site Settings.` });
+          } else {
+            throw err;
+          }
+        }
 
         // ----------------------------------------------------------------
         // 7. WordPress: cleanup default content
