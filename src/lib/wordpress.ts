@@ -96,82 +96,47 @@ export async function setSiteLogo(creds: WpCredentials, mediaId: number): Promis
 // Elementor kit (global colours + typography)
 // ------------------------------------------------------------------
 
-interface ElementorKitData {
-  settings: Record<string, unknown>;
-  [key: string]: unknown;
-}
-
-/** Ensure Elementor is active — activate it via the WP plugins REST API if needed. */
-async function ensureElementorActive(creds: WpCredentials): Promise<void> {
-  // Check plugin status
-  const listRes = await wpFetch(creds, '/wp/v2/plugins?search=elementor');
-  if (!listRes.ok) return; // Can't check — proceed anyway
-
-  const plugins: Array<{ plugin: string; status: string; name: string }> = await listRes.json();
-  const elementor = plugins.find((p) => p.plugin.startsWith('elementor/'));
-  if (!elementor) return; // Not found — nothing to activate
-
-  if (elementor.status === 'active') return; // Already active
-
-  // Activate it
-  await wpFetch(creds, `/wp/v2/plugins/${encodeURIComponent(elementor.plugin)}`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ status: 'active' }),
-  });
-
-  // Give WordPress a moment to finish activating
-  await new Promise((r) => setTimeout(r, 3000));
-}
-
-async function getKitData(creds: WpCredentials): Promise<ElementorKitData> {
-  const res = await wpFetch(creds, '/elementor/v1/kit-data');
-  if (!res.ok) throw new Error(`Get Elementor kit failed (${res.status}): ${await res.text()}`);
-  return res.json();
-}
-
 /**
- * Update Elementor global colours and typography via the Elementor REST API.
+ * Update Elementor global colours and typography via the individual globals endpoints.
  *
- * If the kit endpoint returns 404, Elementor is likely inactive on the clone —
- * we activate it via the WP plugins API then retry once.
+ * Uses POST /elementor/v1/globals/colors/{id} and
+ *      POST /elementor/v1/globals/typography/{id}
+ * which are confirmed present in wp-json for this Elementor setup.
  */
 export async function updateElementorGlobals(
   creds: WpCredentials,
   colors: ElementorColor[],
   typography: ElementorTypography[],
 ): Promise<void> {
-  const applyKit = async (): Promise<void> => {
-    const kitData = await getKitData(creds);
-
-    const updatedSettings = {
-      ...kitData.settings,
-      system_colors: colors,
-      system_typography: typography,
-    };
-
-    const res = await wpFetch(creds, '/elementor/v1/kit-data', {
+  for (const color of colors) {
+    const res = await wpFetch(creds, `/elementor/v1/globals/colors/${encodeURIComponent(color._id)}`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ settings: updatedSettings }),
+      body: JSON.stringify({ id: color._id, title: color.title, value: { color: color.color } }),
     });
-
     if (!res.ok) {
       const text = await res.text();
-      throw new Error(`Update Elementor kit failed (${res.status}): ${text}`);
+      throw new Error(`Update Elementor color "${color._id}" failed (${res.status}): ${text}`);
     }
-  };
+  }
 
-  try {
-    await applyKit();
-  } catch (err) {
-    const msg = err instanceof Error ? err.message : String(err);
-    if (msg.includes('404')) {
-      // Elementor likely inactive — activate and retry once
-      await ensureElementorActive(creds);
-      await applyKit();
-    } else {
-      throw err;
+  for (const typo of typography) {
+    const res = await wpFetch(creds, `/elementor/v1/globals/typography/${encodeURIComponent(typo._id)}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        id: typo._id,
+        title: typo.title,
+        value: {
+          typography: typo.typography_typography,
+          font_family: typo.typography_font_family,
+          font_weight: typo.typography_font_weight,
+        },
+      }),
+    });
+    if (!res.ok) {
+      const text = await res.text();
+      throw new Error(`Update Elementor typography "${typo._id}" failed (${res.status}): ${text}`);
     }
   }
 }
