@@ -1,5 +1,6 @@
 import { Client } from 'ssh2';
 import fs from 'fs'; // used only when SSH_KEY_PATH is set (local dev)
+import net from 'net';
 
 export interface SshConfig {
   host: string;
@@ -81,8 +82,44 @@ function wp(wpPath: string, args: string): string {
   return `cd "${wpPath}" && wp ${args} --allow-root`;
 }
 
+/** Test raw TCP reachability before attempting SSH handshake. */
+function checkTcpReachable(host: string, port: number, timeoutMs = 10000): Promise<void> {
+  return new Promise((resolve, reject) => {
+    const socket = net.createConnection({ host, port });
+    const timer = setTimeout(() => {
+      socket.destroy();
+      reject(new Error(`Cannot reach ${host}:${port} — TCP connection timed out. Check SSH_HOST and that the server is reachable from this network.`));
+    }, timeoutMs);
+    socket.once('connect', () => {
+      clearTimeout(timer);
+      socket.destroy();
+      resolve();
+    });
+    socket.once('error', (err) => {
+      clearTimeout(timer);
+      reject(new Error(`Cannot reach ${host}:${port} — ${err.message}`));
+    });
+  });
+}
+
+/** Validate that a private key buffer looks like a PEM key. */
+function validatePrivateKey(key: Buffer): void {
+  const str = key.toString('utf-8');
+  if (!str.includes('-----BEGIN')) {
+    throw new Error(
+      'SSH_PRIVATE_KEY appears malformed — ensure the full key including the -----BEGIN and -----END lines is pasted into your environment variables.',
+    );
+  }
+}
+
 /** Run a single command over SSH. Returns stdout. Throws on non-zero exit. */
-function runCommand(config: SshConfig, command: string): Promise<string> {
+async function runCommand(config: SshConfig, command: string): Promise<string> {
+  await checkTcpReachable(config.host, config.port);
+  validatePrivateKey(config.privateKey);
+  return runCommandInner(config, command);
+}
+
+function runCommandInner(config: SshConfig, command: string): Promise<string> {
   return new Promise((resolve, reject) => {
     const conn = new Client();
     let stdout = '';
@@ -116,6 +153,7 @@ function runCommand(config: SshConfig, command: string): Promise<string> {
       port: config.port,
       username: config.username,
       privateKey: config.privateKey,
+      readyTimeout: 30000,
     });
   });
 }
