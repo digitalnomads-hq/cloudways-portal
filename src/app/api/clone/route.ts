@@ -1,6 +1,6 @@
 import { NextRequest } from 'next/server';
 import { cloneApp, waitForClone, restartNginxAndWait } from '@/lib/cloudways';
-import { configureWordPress } from '@/lib/wordpress';
+import { configureWordPress, setPluginStates } from '@/lib/wordpress';
 import type { ElementorColor, ElementorTypography } from '@/lib/wordpress';
 import { checkPluginUpdates } from '@/lib/wordpress';
 import { deleteDefaultContent, createStandardPages, configureSiteSettings, createNavMenu } from '@/lib/wp-setup';
@@ -36,6 +36,8 @@ export async function POST(req: NextRequest) {
       const send = (event: string, payload: Record<string, unknown> = {}) => {
         controller.enqueue(encoder.encode(sseEvent({ event, ...payload })));
       };
+
+      let partialAppId: string | undefined;
 
       try {
         // ----------------------------------------------------------------
@@ -83,6 +85,20 @@ export async function POST(req: NextRequest) {
           logoMimeType = logoFile.type || 'image/png';
         }
 
+        const faviconFile = formData.get('favicon') as File | null;
+        let faviconBuffer: Buffer | null = null;
+        let faviconFilename = '';
+        let faviconMimeType = '';
+        if (faviconFile && faviconFile.size > 0) {
+          faviconBuffer = Buffer.from(await faviconFile.arrayBuffer());
+          faviconFilename = faviconFile.name;
+          faviconMimeType = faviconFile.type || 'image/png';
+        }
+
+        // Plugin states: { 'plugin/plugin.php': true/false }
+        const pluginStatesRaw = formData.get('pluginStates') as string | null;
+        const pluginStates: Record<string, boolean> = pluginStatesRaw ? JSON.parse(pluginStatesRaw) : {};
+
         // ----------------------------------------------------------------
         // 2. Check plugins on template for available updates
         // ----------------------------------------------------------------
@@ -113,6 +129,7 @@ export async function POST(req: NextRequest) {
           appLabel,
           (msg) => send('status', { step: 4, message: msg }),
         );
+        partialAppId = newApp.id;
         send('status', { step: 4, message: 'Clone complete.' });
         const siteUrl = newApp.app_fqdn ? `https://${newApp.app_fqdn}` : `http://${newApp.cname}`;
         const adminUrl = `${siteUrl}/wp-admin`;
@@ -136,7 +153,7 @@ export async function POST(req: NextRequest) {
         try {
           await configureWordPress(
             wpCreds,
-            { title: siteName, tagline, logoBuffer, logoFilename, logoMimeType, colors, typography },
+            { title: siteName, tagline, logoBuffer, logoFilename, logoMimeType, faviconBuffer, faviconFilename, faviconMimeType, colors, typography },
             (msg) => send('status', { step: 6, message: msg }),
           );
         } catch (err) {
@@ -182,6 +199,14 @@ export async function POST(req: NextRequest) {
         );
 
         // ----------------------------------------------------------------
+        // 10.5 Set plugin states
+        // ----------------------------------------------------------------
+        if (Object.keys(pluginStates).length > 0) {
+          send('status', { step: 10, message: 'Configuring plugins…' });
+          await setPluginStates(wpCreds, pluginStates, (msg) => send('status', { step: 10, message: msg }));
+        }
+
+        // ----------------------------------------------------------------
         // 11. Send summary email (if SMTP configured and email provided)
         // ----------------------------------------------------------------
         const smtpReady = !!(process.env.SMTP_HOST && process.env.SMTP_USER && process.env.SMTP_PASS);
@@ -219,7 +244,7 @@ export async function POST(req: NextRequest) {
         });
       } catch (err) {
         const message = err instanceof Error ? err.message : String(err);
-        send('error', { message });
+        send('error', { message, cloudwaysAppId: partialAppId });
       } finally {
         controller.close();
       }

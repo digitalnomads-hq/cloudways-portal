@@ -92,6 +92,40 @@ export async function setSiteLogo(creds: WpCredentials, mediaId: number): Promis
   if (!res.ok) throw new Error(`Set site logo failed (${res.status}): ${await res.text()}`);
 }
 
+export async function uploadFavicon(
+  creds: WpCredentials,
+  buffer: Buffer,
+  filename: string,
+  mimeType: string,
+): Promise<number> {
+  const res = await wpFetch(creds, '/wp/v2/media', {
+    method: 'POST',
+    headers: {
+      'Content-Disposition': `attachment; filename="${filename}"`,
+      'Content-Type': mimeType,
+    },
+    body: buffer as unknown as BodyInit,
+  });
+  if (!res.ok) {
+    const text = await res.text();
+    throw new Error(`Favicon upload failed (${res.status}): ${text}`);
+  }
+  const data = await res.json();
+  return data.id as number;
+}
+
+export async function setFavicon(creds: WpCredentials, mediaId: number): Promise<void> {
+  const res = await wpFetch(creds, '/wp/v2/settings', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ site_icon: mediaId }),
+  });
+  if (!res.ok) {
+    const text = await res.text();
+    throw new Error(`Set favicon failed (${res.status}): ${text}`);
+  }
+}
+
 // ------------------------------------------------------------------
 // Elementor kit (global colours + typography)
 // ------------------------------------------------------------------
@@ -173,6 +207,30 @@ export async function checkPluginUpdates(
   }
 }
 
+/**
+ * Set plugin active/inactive states based on a desired state map.
+ * pluginStates: { pluginFile: boolean } e.g. { 'elementor/elementor.php': true }
+ */
+export async function setPluginStates(
+  creds: WpCredentials,
+  pluginStates: Record<string, boolean>,
+  onStep: (msg: string) => void,
+): Promise<void> {
+  for (const [pluginFile, shouldBeActive] of Object.entries(pluginStates)) {
+    const status = shouldBeActive ? 'active' : 'inactive';
+    onStep(`  ${shouldBeActive ? 'Activating' : 'Deactivating'} ${pluginFile}…`);
+    const res = await wpFetch(creds, `/wp/v2/plugins/${encodeURIComponent(pluginFile)}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ status }),
+    });
+    if (!res.ok) {
+      const text = await res.text();
+      onStep(`  ⚠ Could not set ${pluginFile} to ${status} (${res.status}): ${text.slice(0, 80)}`);
+    }
+  }
+}
+
 /** Run all WordPress configuration steps in sequence. */
 export async function configureWordPress(
   creds: WpCredentials,
@@ -182,6 +240,9 @@ export async function configureWordPress(
     logoBuffer: Buffer | null;
     logoFilename: string;
     logoMimeType: string;
+    faviconBuffer: Buffer | null;
+    faviconFilename: string;
+    faviconMimeType: string;
     colors: ElementorColor[];
     typography: ElementorTypography[];
   },
@@ -200,6 +261,13 @@ export async function configureWordPress(
     );
     onStep('Setting site logo…');
     await setSiteLogo(creds, mediaId);
+  }
+
+  if (params.faviconBuffer) {
+    onStep('Uploading favicon…');
+    const faviconId = await uploadFavicon(creds, params.faviconBuffer, params.faviconFilename, params.faviconMimeType);
+    onStep('Setting site favicon…');
+    await setFavicon(creds, faviconId);
   }
 
   onStep('Updating Elementor global colours and fonts…');

@@ -10,7 +10,7 @@ import FontPicker from '@/components/FontPicker';
 type SseEvent =
   | { event: 'status'; step: number; message: string }
   | { event: 'complete'; message: string; siteUrl: string; adminUrl: string; cloudwaysAppId: string }
-  | { event: 'error'; message: string };
+  | { event: 'error'; message: string; cloudwaysAppId?: string };
 
 type FormState = 'idle' | 'submitting' | 'complete' | 'error';
 
@@ -22,6 +22,12 @@ interface CheckResult {
 
 type TestState = 'idle' | 'running' | 'done';
 
+interface Plugin {
+  plugin: string;
+  name: string;
+  status: string;
+}
+
 // ---------------------------------------------------------------------------
 // Page
 // ---------------------------------------------------------------------------
@@ -31,7 +37,10 @@ export default function Home() {
   const [statusMessages, setStatusMessages] = useState<string[]>([]);
   const [result, setResult] = useState<{ siteUrl: string; adminUrl?: string; appId: string } | null>(null);
   const [logoPreview, setLogoPreview] = useState<string | null>(null);
+  const [faviconPreview, setFaviconPreview] = useState<string | null>(null);
   const [errorMsg, setErrorMsg] = useState('');
+  const [partialAppId, setPartialAppId] = useState<string | undefined>();
+  const [deleteState, setDeleteState] = useState<'idle' | 'deleting' | 'deleted'>('idle');
   const logRef = useRef<HTMLDivElement>(null);
 
   // Fonts
@@ -39,11 +48,36 @@ export default function Home() {
   const [headingFont, setHeadingFont] = useState('Montserrat');
   const [bodyFont, setBodyFont] = useState('Open Sans');
 
+  // Colors (lifted for preview)
+  const [primaryColor, setPrimaryColor] = useState('#3B82F6');
+  const [secondaryColor, setSecondaryColor] = useState('#6366F1');
+  const [accentColor, setAccentColor] = useState('#10B981');
+  const [textColor, setTextColor] = useState('#111827');
+
+  // Plugins
+  const [plugins, setPlugins] = useState<Plugin[]>([]);
+  const [pluginStates, setPluginStates] = useState<Record<string, boolean>>({});
+  const [pluginsLoading, setPluginsLoading] = useState(false);
+
   useEffect(() => {
     fetch('/api/fonts')
       .then((r) => r.json())
       .then((d) => setFonts(d.fonts ?? []))
       .catch(() => setFonts(['Roboto', 'Open Sans', 'Lato', 'Montserrat', 'Poppins', 'Inter']));
+
+    setPluginsLoading(true);
+    fetch('/api/plugins')
+      .then((r) => r.json())
+      .then((d: { plugins: Plugin[] }) => {
+        setPlugins(d.plugins ?? []);
+        const states: Record<string, boolean> = {};
+        for (const p of d.plugins ?? []) {
+          states[p.plugin] = p.status === 'active';
+        }
+        setPluginStates(states);
+      })
+      .catch(() => {})
+      .finally(() => setPluginsLoading(false));
   }, []);
 
   // Config test
@@ -79,14 +113,43 @@ export default function Home() {
     reader.readAsDataURL(file);
   }
 
+  function handleFaviconChange(e: ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = () => setFaviconPreview(reader.result as string);
+    reader.readAsDataURL(file);
+  }
+
+  async function handleDeleteApp() {
+    if (!partialAppId) return;
+    setDeleteState('deleting');
+    try {
+      const res = await fetch(`/api/delete-app?appId=${partialAppId}`, { method: 'DELETE' });
+      if (!res.ok) {
+        const data = await res.json();
+        alert(`Delete failed: ${data.error}`);
+        setDeleteState('idle');
+      } else {
+        setDeleteState('deleted');
+      }
+    } catch (err) {
+      alert(err instanceof Error ? err.message : String(err));
+      setDeleteState('idle');
+    }
+  }
+
   async function handleSubmit(e: FormEvent<HTMLFormElement>) {
     e.preventDefault();
     setFormState('submitting');
     setStatusMessages([]);
     setErrorMsg('');
     setResult(null);
+    setPartialAppId(undefined);
+    setDeleteState('idle');
 
     const formData = new FormData(e.currentTarget);
+    formData.set('pluginStates', JSON.stringify(pluginStates));
 
     try {
       const res = await fetch('/api/clone', { method: 'POST', body: formData });
@@ -120,6 +183,7 @@ export default function Home() {
               setFormState('complete');
             } else if (parsed.event === 'error') {
               setErrorMsg(parsed.message);
+              if (parsed.cloudwaysAppId) setPartialAppId(parsed.cloudwaysAppId);
               setFormState('error');
             }
           } catch {
@@ -222,37 +286,45 @@ export default function Home() {
             </Field>
           </Card>
 
-          {/* Logo */}
-          <Card title="Logo">
-            <div className="flex items-center gap-5">
-              {logoPreview ? (
-                <img
-                  src={logoPreview}
-                  alt="Logo preview"
-                  className="w-20 h-20 rounded-xl object-contain border border-gray-100 bg-gray-50"
-                />
-              ) : (
-                <div className="w-20 h-20 rounded-xl border-2 border-dashed border-gray-200 flex items-center justify-center text-gray-300 text-[10px] text-center select-none">
-                  No logo
-                </div>
-              )}
+          {/* Logo & Favicon */}
+          <Card title="Logo & Favicon">
+            <div className="grid grid-cols-2 gap-6">
+              {/* Logo */}
               <div>
-                <label
-                  htmlFor="logo"
-                  className="cursor-pointer inline-block rounded-lg border border-gray-200 px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50 transition"
-                >
-                  Choose file
-                </label>
-                <input
-                  id="logo"
-                  name="logo"
-                  type="file"
-                  accept="image/*"
-                  className="sr-only"
-                  onChange={handleLogoChange}
-                  disabled={isSubmitting}
-                />
-                <p className="mt-1 text-xs text-gray-400">PNG, SVG, or JPG recommended</p>
+                <p className="text-sm font-medium text-gray-700 mb-2">Logo</p>
+                <div className="flex flex-col items-start gap-3">
+                  {logoPreview ? (
+                    <img src={logoPreview} alt="Logo preview" className="w-16 h-16 rounded-xl object-contain border border-gray-100 bg-gray-50" />
+                  ) : (
+                    <div className="w-16 h-16 rounded-xl border-2 border-dashed border-gray-200 flex items-center justify-center text-gray-300 text-[10px] text-center select-none">
+                      No logo
+                    </div>
+                  )}
+                  <label htmlFor="logo" className="cursor-pointer inline-block rounded-lg border border-gray-200 px-3 py-1.5 text-xs font-medium text-gray-700 hover:bg-gray-50 transition">
+                    Choose file
+                  </label>
+                  <input id="logo" name="logo" type="file" accept="image/*" className="sr-only" onChange={handleLogoChange} disabled={isSubmitting} />
+                  <p className="text-xs text-gray-400">PNG, SVG or JPG</p>
+                </div>
+              </div>
+
+              {/* Favicon */}
+              <div>
+                <p className="text-sm font-medium text-gray-700 mb-2">Favicon</p>
+                <div className="flex flex-col items-start gap-3">
+                  {faviconPreview ? (
+                    <img src={faviconPreview} alt="Favicon preview" className="w-16 h-16 rounded-xl object-contain border border-gray-100 bg-gray-50" />
+                  ) : (
+                    <div className="w-16 h-16 rounded-xl border-2 border-dashed border-gray-200 flex items-center justify-center text-gray-300 text-[10px] text-center select-none">
+                      No favicon
+                    </div>
+                  )}
+                  <label htmlFor="favicon" className="cursor-pointer inline-block rounded-lg border border-gray-200 px-3 py-1.5 text-xs font-medium text-gray-700 hover:bg-gray-50 transition">
+                    Choose file
+                  </label>
+                  <input id="favicon" name="favicon" type="file" accept="image/*" className="sr-only" onChange={handleFaviconChange} disabled={isSubmitting} />
+                  <p className="text-xs text-gray-400">PNG or ICO, 512×512</p>
+                </div>
               </div>
             </div>
           </Card>
@@ -260,10 +332,40 @@ export default function Home() {
           {/* Brand Colours */}
           <Card title="Brand Colours">
             <div className="grid grid-cols-2 gap-4">
-              <ColorField name="primaryColor" label="Primary" defaultValue="#3B82F6" disabled={isSubmitting} />
-              <ColorField name="secondaryColor" label="Secondary" defaultValue="#6366F1" disabled={isSubmitting} />
-              <ColorField name="accentColor" label="Accent" defaultValue="#10B981" disabled={isSubmitting} />
-              <ColorField name="textColor" label="Text" defaultValue="#111827" disabled={isSubmitting} />
+              <ControlledColorField name="primaryColor" label="Primary" value={primaryColor} onChange={setPrimaryColor} disabled={isSubmitting} />
+              <ControlledColorField name="secondaryColor" label="Secondary" value={secondaryColor} onChange={setSecondaryColor} disabled={isSubmitting} />
+              <ControlledColorField name="accentColor" label="Accent" value={accentColor} onChange={setAccentColor} disabled={isSubmitting} />
+              <ControlledColorField name="textColor" label="Text" value={textColor} onChange={setTextColor} disabled={isSubmitting} />
+            </div>
+
+            {/* Live preview */}
+            <div className="mt-4 rounded-xl overflow-hidden border border-gray-200 text-xs">
+              <div className="px-4 py-2.5 flex items-center gap-3" style={{ backgroundColor: primaryColor }}>
+                <span className="font-bold text-white text-sm opacity-90">Brand Preview</span>
+                <span className="ml-auto flex gap-2">
+                  <span className="w-2 h-2 rounded-full bg-white opacity-60" />
+                  <span className="w-2 h-2 rounded-full bg-white opacity-60" />
+                  <span className="w-2 h-2 rounded-full bg-white opacity-60" />
+                </span>
+              </div>
+              <div className="p-4 bg-white flex gap-3 items-start">
+                <div className="flex-1">
+                  <div className="h-2.5 rounded mb-2 w-2/3" style={{ backgroundColor: textColor, opacity: 0.85 }} />
+                  <div className="h-2 rounded mb-1.5 w-full opacity-20" style={{ backgroundColor: textColor }} />
+                  <div className="h-2 rounded mb-3 w-4/5 opacity-20" style={{ backgroundColor: textColor }} />
+                  <button
+                    type="button"
+                    className="px-3 py-1.5 rounded-lg text-white text-xs font-medium"
+                    style={{ backgroundColor: accentColor }}
+                  >
+                    Call to action
+                  </button>
+                </div>
+                <div className="w-16 h-16 rounded-lg flex-shrink-0" style={{ backgroundColor: secondaryColor, opacity: 0.15 }} />
+              </div>
+              <div className="px-4 py-2 flex gap-3" style={{ backgroundColor: secondaryColor }}>
+                <span className="text-white opacity-70 text-[10px]">Footer • Secondary colour</span>
+              </div>
             </div>
           </Card>
 
@@ -291,6 +393,34 @@ export default function Home() {
                 />
               </Field>
             </div>
+          </Card>
+
+          {/* Plugins */}
+          <Card title="Plugins">
+            {pluginsLoading ? (
+              <p className="text-sm text-gray-400">Loading plugins…</p>
+            ) : plugins.length === 0 ? (
+              <p className="text-sm text-gray-400">No plugins found — set TEMPLATE_WP_URL to load plugins.</p>
+            ) : (
+              <div className="space-y-2">
+                <p className="text-xs text-gray-400 mb-3">Choose which plugins to activate on the cloned site.</p>
+                {plugins.map((p) => (
+                  <label key={p.plugin} className="flex items-center gap-3 cursor-pointer group">
+                    <input
+                      type="checkbox"
+                      checked={pluginStates[p.plugin] ?? false}
+                      onChange={(e) => setPluginStates((prev) => ({ ...prev, [p.plugin]: e.target.checked }))}
+                      disabled={isSubmitting}
+                      className="w-4 h-4 rounded border-gray-300 text-blue-600 focus:ring-blue-500 disabled:opacity-50"
+                    />
+                    <span className="text-sm text-gray-700 group-hover:text-gray-900">{p.name}</span>
+                    <span className={`ml-auto text-[10px] font-medium px-1.5 py-0.5 rounded-full ${p.status === 'active' ? 'bg-green-100 text-green-700' : 'bg-gray-100 text-gray-500'}`}>
+                      {p.status}
+                    </span>
+                  </label>
+                ))}
+              </div>
+            )}
           </Card>
 
           <button
@@ -351,12 +481,31 @@ export default function Home() {
           <div className="mt-6 bg-red-50 border border-red-200 rounded-2xl p-6">
             <h2 className="text-base font-semibold text-red-800 mb-1">Something went wrong</h2>
             <pre className="text-sm text-red-700 whitespace-pre-wrap font-mono">{errorMsg}</pre>
-            <button
-              onClick={() => { setFormState('idle'); setErrorMsg(''); setStatusMessages([]); }}
-              className="mt-4 rounded-lg border border-red-300 px-4 py-2 text-sm font-medium text-red-700 hover:bg-red-100 transition"
-            >
-              Try again
-            </button>
+            <div className="mt-4 flex flex-wrap gap-2">
+              <button
+                onClick={() => { setFormState('idle'); setErrorMsg(''); setStatusMessages([]); setPartialAppId(undefined); setDeleteState('idle'); }}
+                className="rounded-lg border border-red-300 px-4 py-2 text-sm font-medium text-red-700 hover:bg-red-100 transition"
+              >
+                Try again
+              </button>
+              {partialAppId && deleteState !== 'deleted' && (
+                <button
+                  onClick={handleDeleteApp}
+                  disabled={deleteState === 'deleting'}
+                  className="rounded-lg border border-red-400 bg-red-100 px-4 py-2 text-sm font-medium text-red-800 hover:bg-red-200 disabled:opacity-50 transition"
+                >
+                  {deleteState === 'deleting' ? 'Deleting…' : 'Delete cloned site'}
+                </button>
+              )}
+              {deleteState === 'deleted' && (
+                <span className="rounded-lg border border-green-300 bg-green-50 px-4 py-2 text-sm font-medium text-green-700">
+                  ✓ Cloned site deleted
+                </span>
+              )}
+            </div>
+            {partialAppId && deleteState !== 'deleted' && (
+              <p className="mt-2 text-xs text-red-500">App ID: {partialAppId} — delete this if you want to start fresh.</p>
+            )}
           </div>
         )}
       </div>
@@ -403,19 +552,19 @@ function Field({
   );
 }
 
-function ColorField({
+function ControlledColorField({
   name,
   label,
-  defaultValue,
+  value,
+  onChange,
   disabled,
 }: {
   name: string;
   label: string;
-  defaultValue: string;
+  value: string;
+  onChange: (v: string) => void;
   disabled?: boolean;
 }) {
-  const [value, setValue] = useState(defaultValue);
-
   return (
     <div>
       <label className="block text-sm font-medium text-gray-700 mb-1">{label}</label>
@@ -423,7 +572,7 @@ function ColorField({
         <input
           type="color"
           value={value}
-          onChange={(e) => setValue(e.target.value)}
+          onChange={(e) => onChange(e.target.value)}
           disabled={disabled}
           className="w-8 h-8 rounded cursor-pointer border-0 bg-transparent p-0 disabled:opacity-50"
           aria-label={`${label} colour picker`}
@@ -432,7 +581,7 @@ function ColorField({
           name={name}
           type="text"
           value={value}
-          onChange={(e) => setValue(e.target.value)}
+          onChange={(e) => onChange(e.target.value)}
           disabled={disabled}
           className="flex-1 font-mono text-sm text-gray-700 focus:outline-none bg-transparent disabled:opacity-50"
           pattern="^#[0-9A-Fa-f]{6}$"
