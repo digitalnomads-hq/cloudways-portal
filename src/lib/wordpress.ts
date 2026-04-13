@@ -18,6 +18,20 @@ export interface ElementorTypography {
   typography_font_weight?: string;
 }
 
+export interface ElementorThemeStyles {
+  // Buttons
+  buttonBackgroundColor?: string;
+  buttonTextColor?: string;
+  buttonHoverBackgroundColor?: string;
+  buttonHoverTextColor?: string;
+  buttonBorderRadius?: number;
+  // Links
+  linkColor?: string;
+  linkHoverColor?: string;
+  // Layout
+  containerWidth?: number; // px
+}
+
 // ------------------------------------------------------------------
 // Helpers
 // ------------------------------------------------------------------
@@ -141,6 +155,7 @@ export async function updateElementorGlobals(
   creds: WpCredentials,
   colors: ElementorColor[],
   typography: ElementorTypography[],
+  themeStyles?: ElementorThemeStyles,
 ): Promise<void> {
   // 1. Find the active kit post
   const kitListRes = await wpFetch(creds, '/wp/v2/elementor_library?status=any&per_page=20');
@@ -157,9 +172,30 @@ export async function updateElementorGlobals(
   const kitData = await kitRes.json();
   const currentSettings = kitData.meta?._elementor_page_settings ?? {};
 
-  // 3. Write system colors + typography, clear any duplicate custom entries
+  // 3. Build theme style overrides if provided
+  const themeOverrides: Record<string, unknown> = {};
+  if (themeStyles) {
+    if (themeStyles.buttonBackgroundColor)      themeOverrides.button_background_color       = themeStyles.buttonBackgroundColor;
+    if (themeStyles.buttonTextColor)            themeOverrides.button_text_color             = themeStyles.buttonTextColor;
+    if (themeStyles.buttonHoverBackgroundColor) themeOverrides.button_hover_background_color = themeStyles.buttonHoverBackgroundColor;
+    if (themeStyles.buttonHoverTextColor)       themeOverrides.button_hover_text_color       = themeStyles.buttonHoverTextColor;
+    if (themeStyles.buttonBorderRadius != null) {
+      themeOverrides.button_border_radius = {
+        unit: 'px', top: themeStyles.buttonBorderRadius, right: themeStyles.buttonBorderRadius,
+        bottom: themeStyles.buttonBorderRadius, left: themeStyles.buttonBorderRadius, isLinked: true,
+      };
+    }
+    if (themeStyles.linkColor)      themeOverrides.link_normal_color = themeStyles.linkColor;
+    if (themeStyles.linkHoverColor) themeOverrides.link_hover_color  = themeStyles.linkHoverColor;
+    if (themeStyles.containerWidth != null) {
+      themeOverrides.container_width = { unit: 'px', size: themeStyles.containerWidth, sizes: [] };
+    }
+  }
+
+  // 4. Write system colors + typography + theme styles, clear duplicate custom entries
   const newSettings = {
     ...currentSettings,
+    ...themeOverrides,
     system_colors: colors,
     system_typography: typography,
     custom_colors: [],
@@ -245,6 +281,7 @@ export async function configureWordPress(
     faviconMimeType: string;
     colors: ElementorColor[];
     typography: ElementorTypography[];
+    themeStyles?: ElementorThemeStyles;
   },
   onStep: (msg: string) => void,
 ): Promise<void> {
@@ -270,10 +307,10 @@ export async function configureWordPress(
     await setFavicon(creds, faviconId);
   }
 
-  onStep('Updating Elementor global colours and fonts…');
+  onStep('Updating Elementor global colours, fonts and theme styles…');
   try {
-    await updateElementorGlobals(creds, params.colors, params.typography);
-    onStep('  Elementor globals updated.');
+    await updateElementorGlobals(creds, params.colors, params.typography, params.themeStyles);
+    onStep('  Elementor kit updated.');
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     throw new Error(`Elementor: ${msg}`);

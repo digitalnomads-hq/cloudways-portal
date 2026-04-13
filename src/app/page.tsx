@@ -58,6 +58,17 @@ export default function Home() {
   const [plugins, setPlugins] = useState<Plugin[]>([]);
   const [pluginStates, setPluginStates] = useState<Record<string, boolean>>({});
   const [pluginsLoading, setPluginsLoading] = useState(false);
+  const [showPlugins, setShowPlugins] = useState(false);
+
+  // Elementor theme styles
+  const [showThemeStyles, setShowThemeStyles] = useState(false);
+  const [btnBgColor, setBtnBgColor] = useState('');
+  const [btnTextColor, setBtnTextColor] = useState('#ffffff');
+  const [btnHoverBgColor, setBtnHoverBgColor] = useState('');
+  const [btnBorderRadius, setBtnBorderRadius] = useState(4);
+  const [linkColor, setLinkColor] = useState('');
+  const [linkHoverColor, setLinkHoverColor] = useState('');
+  const [containerWidth, setContainerWidth] = useState(1140);
 
   useEffect(() => {
     fetch('/api/fonts')
@@ -79,6 +90,12 @@ export default function Home() {
       .catch(() => {})
       .finally(() => setPluginsLoading(false));
   }, []);
+
+  // Keep theme style color defaults in sync with brand colors (only when not manually overridden)
+  useEffect(() => { if (!btnBgColor) setBtnBgColor(accentColor); }, [accentColor]);       // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => { if (!btnHoverBgColor) setBtnHoverBgColor(primaryColor); }, [primaryColor]); // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => { if (!linkColor) setLinkColor(primaryColor); }, [primaryColor]);       // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => { if (!linkHoverColor) setLinkHoverColor(accentColor); }, [accentColor]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Config test
   const [testState, setTestState] = useState<TestState>('idle');
@@ -149,7 +166,20 @@ export default function Home() {
     setDeleteState('idle');
 
     const formData = new FormData(e.currentTarget);
-    formData.set('pluginStates', JSON.stringify(pluginStates));
+    formData.set('pluginStates', JSON.stringify(showPlugins ? pluginStates : {}));
+
+    if (showThemeStyles) {
+      const ts = {
+        buttonBackgroundColor: btnBgColor || undefined,
+        buttonTextColor: btnTextColor || undefined,
+        buttonHoverBackgroundColor: btnHoverBgColor || undefined,
+        buttonBorderRadius: btnBorderRadius,
+        linkColor: linkColor || undefined,
+        linkHoverColor: linkHoverColor || undefined,
+        containerWidth,
+      };
+      formData.set('themeStyles', JSON.stringify(ts));
+    }
 
     try {
       const res = await fetch('/api/clone', { method: 'POST', body: formData });
@@ -396,7 +426,13 @@ export default function Home() {
           </Card>
 
           {/* Plugins */}
-          <Card title="Plugins">
+          <CollapsibleCard
+            title="Plugins"
+            checked={showPlugins}
+            onToggle={setShowPlugins}
+            disabled={isSubmitting}
+            summary={showPlugins ? undefined : 'Configure which plugins are active on the cloned site'}
+          >
             {pluginsLoading ? (
               <p className="text-sm text-gray-400">Loading plugins…</p>
             ) : plugins.length === 0 ? (
@@ -421,7 +457,68 @@ export default function Home() {
                 ))}
               </div>
             )}
-          </Card>
+          </CollapsibleCard>
+
+          {/* Elementor Theme Styles */}
+          <CollapsibleCard
+            title="Elementor Theme Styles"
+            checked={showThemeStyles}
+            onToggle={setShowThemeStyles}
+            disabled={isSubmitting}
+            summary={showThemeStyles ? undefined : 'Set buttons, links and layout defaults in the Elementor kit'}
+          >
+            <div className="space-y-5">
+              {/* Buttons */}
+              <div>
+                <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-3">Button</p>
+                <div className="grid grid-cols-2 gap-4">
+                  <ControlledColorField name="_btnBgColor" label="Background" value={btnBgColor} onChange={setBtnBgColor} disabled={isSubmitting} />
+                  <ControlledColorField name="_btnTextColor" label="Text" value={btnTextColor} onChange={setBtnTextColor} disabled={isSubmitting} />
+                  <ControlledColorField name="_btnHoverBgColor" label="Hover Background" value={btnHoverBgColor} onChange={setBtnHoverBgColor} disabled={isSubmitting} />
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-1">Border Radius (px)</label>
+                    <input
+                      type="number"
+                      min={0}
+                      max={50}
+                      value={btnBorderRadius}
+                      onChange={(e) => setBtnBorderRadius(Number(e.target.value))}
+                      disabled={isSubmitting}
+                      className={inputCls}
+                    />
+                  </div>
+                </div>
+              </div>
+
+              {/* Links */}
+              <div>
+                <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-3">Links</p>
+                <div className="grid grid-cols-2 gap-4">
+                  <ControlledColorField name="_linkColor" label="Link Color" value={linkColor} onChange={setLinkColor} disabled={isSubmitting} />
+                  <ControlledColorField name="_linkHoverColor" label="Hover Color" value={linkHoverColor} onChange={setLinkHoverColor} disabled={isSubmitting} />
+                </div>
+              </div>
+
+              {/* Layout */}
+              <div>
+                <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-3">Layout</p>
+                <div className="max-w-xs">
+                  <label className="block text-sm font-medium text-gray-700 mb-1">Container Width</label>
+                  <select
+                    value={containerWidth}
+                    onChange={(e) => setContainerWidth(Number(e.target.value))}
+                    disabled={isSubmitting}
+                    className={inputCls}
+                  >
+                    <option value={1140}>1140px (default)</option>
+                    <option value={1200}>1200px</option>
+                    <option value={1280}>1280px</option>
+                    <option value={1440}>1440px (wide)</option>
+                  </select>
+                </div>
+              </div>
+            </div>
+          </CollapsibleCard>
 
           <button
             type="submit"
@@ -529,6 +626,41 @@ function Card({ title, children }: { title: string; children: React.ReactNode })
     <section className="bg-white rounded-2xl shadow-sm border border-gray-100 p-6 space-y-4">
       <h2 className="text-xs font-semibold text-gray-400 uppercase tracking-wide">{title}</h2>
       {children}
+    </section>
+  );
+}
+
+function CollapsibleCard({
+  title,
+  checked,
+  onToggle,
+  disabled,
+  summary,
+  children,
+}: {
+  title: string;
+  checked: boolean;
+  onToggle: (v: boolean) => void;
+  disabled?: boolean;
+  summary?: string;
+  children: React.ReactNode;
+}) {
+  return (
+    <section className="bg-white rounded-2xl shadow-sm border border-gray-100 p-6">
+      <label className="flex items-center gap-3 cursor-pointer select-none">
+        <input
+          type="checkbox"
+          checked={checked}
+          onChange={(e) => onToggle(e.target.checked)}
+          disabled={disabled}
+          className="w-4 h-4 rounded border-gray-300 text-blue-600 focus:ring-blue-500 disabled:opacity-50"
+        />
+        <span className="text-xs font-semibold text-gray-400 uppercase tracking-wide">{title}</span>
+        {!checked && summary && (
+          <span className="ml-2 text-xs text-gray-400 font-normal normal-case tracking-normal">{summary}</span>
+        )}
+      </label>
+      {checked && <div className="mt-4 space-y-4">{children}</div>}
     </section>
   );
 }

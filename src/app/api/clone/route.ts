@@ -1,7 +1,7 @@
 import { NextRequest } from 'next/server';
 import { cloneApp, waitForClone, restartNginxAndWait } from '@/lib/cloudways';
 import { configureWordPress, setPluginStates } from '@/lib/wordpress';
-import type { ElementorColor, ElementorTypography } from '@/lib/wordpress';
+import type { ElementorColor, ElementorTypography, ElementorThemeStyles } from '@/lib/wordpress';
 import { checkPluginUpdates } from '@/lib/wordpress';
 import { deleteDefaultContent, createStandardPages, configureSiteSettings, createNavMenu } from '@/lib/wp-setup';
 import { sendSiteSummary } from '@/lib/email';
@@ -99,6 +99,10 @@ export async function POST(req: NextRequest) {
         const pluginStatesRaw = formData.get('pluginStates') as string | null;
         const pluginStates: Record<string, boolean> = pluginStatesRaw ? JSON.parse(pluginStatesRaw) : {};
 
+        // Theme styles (optional)
+        const themeStylesRaw = formData.get('themeStyles') as string | null;
+        const themeStyles: ElementorThemeStyles | undefined = themeStylesRaw ? JSON.parse(themeStylesRaw) : undefined;
+
         // ----------------------------------------------------------------
         // 2. Check plugins on template for available updates
         // ----------------------------------------------------------------
@@ -153,7 +157,7 @@ export async function POST(req: NextRequest) {
         try {
           await configureWordPress(
             wpCreds,
-            { title: siteName, tagline, logoBuffer, logoFilename, logoMimeType, faviconBuffer, faviconFilename, faviconMimeType, colors, typography },
+            { title: siteName, tagline, logoBuffer, logoFilename, logoMimeType, faviconBuffer, faviconFilename, faviconMimeType, colors, typography, themeStyles },
             (msg) => send('status', { step: 6, message: msg }),
           );
         } catch (err) {
