@@ -97,91 +97,49 @@ export async function setSiteLogo(creds: WpCredentials, mediaId: number): Promis
 // ------------------------------------------------------------------
 
 /**
- * Update Elementor global colours and typography via the individual globals endpoints.
+ * Update Elementor system colours and typography by writing directly to the
+ * Elementor kit post meta (_elementor_page_settings).
  *
- * Strategy: GET the existing globals first to discover the real IDs of the default
- * system entries (Elementor stores them with hashed IDs, not "primary"/"secondary").
- * Match by title, update in-place. If no match is found, fall back to creating a
- * new entry using the caller-supplied ID.
+ * This is the only reliable method — the /elementor/v1/globals/* endpoints
+ * only create custom globals, not update the system defaults.
  */
 export async function updateElementorGlobals(
   creds: WpCredentials,
   colors: ElementorColor[],
   typography: ElementorTypography[],
-  onStep?: (msg: string) => void,
 ): Promise<void> {
-  // ------------------------------------------------------------------
-  // Colours
-  // ------------------------------------------------------------------
-  let existingColors: Array<{ id: string; title: string }> = [];
-  try {
-    const listRes = await wpFetch(creds, '/elementor/v1/globals/colors');
-    if (listRes.ok) {
-      const data = await listRes.json();
-      onStep?.(`  DEBUG colors response: ${JSON.stringify(data).slice(0, 300)}`);
-      // Response may be an object keyed by ID or an array
-      existingColors = Array.isArray(data)
-        ? data
-        : Object.values(data as Record<string, { id: string; title: string }>);
-    }
-  } catch { /* non-fatal — fall back to caller IDs */ }
-
-  for (const color of colors) {
-    // Try to find an existing system color whose title matches (case-insensitive)
-    const existing = existingColors.find(
-      (c) => c.title.toLowerCase() === color.title.toLowerCase(),
-    );
-    const targetId = existing?.id ?? color._id;
-    onStep?.(`  Setting color "${color.title}" → id="${targetId}" value="${color.color}"`);
-
-    const res = await wpFetch(creds, `/elementor/v1/globals/colors/${encodeURIComponent(targetId)}`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ id: targetId, title: color.title, value: { color: color.color } }),
-    });
-    if (!res.ok) {
-      const text = await res.text();
-      throw new Error(`Update Elementor color "${color.title}" failed (${res.status}): ${text}`);
-    }
+  // 1. Find the active kit post
+  const kitListRes = await wpFetch(creds, '/wp/v2/elementor_library?status=any&per_page=20');
+  if (!kitListRes.ok) {
+    throw new Error(`Could not list Elementor library posts (${kitListRes.status})`);
   }
+  const kits: Array<{ id: number; status: string }> = await kitListRes.json();
+  const kit = kits.find((k) => k.status === 'publish') ?? kits[0];
+  if (!kit) throw new Error('No Elementor kit found');
 
-  // ------------------------------------------------------------------
-  // Typography
-  // ------------------------------------------------------------------
-  let existingTypo: Array<{ id: string; title: string }> = [];
-  try {
-    const listRes = await wpFetch(creds, '/elementor/v1/globals/typography');
-    if (listRes.ok) {
-      const data = await listRes.json();
-      existingTypo = Array.isArray(data)
-        ? data
-        : Object.values(data as Record<string, { id: string; title: string }>);
-    }
-  } catch { /* non-fatal */ }
+  // 2. Read current settings so we preserve any other kit settings
+  const kitRes = await wpFetch(creds, `/wp/v2/elementor_library/${kit.id}?context=edit`);
+  if (!kitRes.ok) throw new Error(`Could not read Elementor kit (${kitRes.status})`);
+  const kitData = await kitRes.json();
+  const currentSettings = kitData.meta?._elementor_page_settings ?? {};
 
-  for (const typo of typography) {
-    const existing = existingTypo.find(
-      (t) => t.title.toLowerCase() === typo.title.toLowerCase(),
-    );
-    const targetId = existing?.id ?? typo._id;
+  // 3. Write system colors + typography, clear any duplicate custom entries
+  const newSettings = {
+    ...currentSettings,
+    system_colors: colors,
+    system_typography: typography,
+    custom_colors: [],
+    custom_typography: [],
+  };
 
-    const res = await wpFetch(creds, `/elementor/v1/globals/typography/${encodeURIComponent(targetId)}`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        id: targetId,
-        title: typo.title,
-        value: {
-          typography: typo.typography_typography,
-          font_family: typo.typography_font_family,
-          font_weight: typo.typography_font_weight,
-        },
-      }),
-    });
-    if (!res.ok) {
-      const text = await res.text();
-      throw new Error(`Update Elementor typography "${typo.title}" failed (${res.status}): ${text}`);
-    }
+  const updateRes = await wpFetch(creds, `/wp/v2/elementor_library/${kit.id}`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ meta: { _elementor_page_settings: newSettings } }),
+  });
+  if (!updateRes.ok) {
+    const text = await updateRes.text();
+    throw new Error(`Failed to update Elementor kit (${updateRes.status}): ${text}`);
   }
 }
 
@@ -246,7 +204,7 @@ export async function configureWordPress(
 
   onStep('Updating Elementor global colours and fonts…');
   try {
-    await updateElementorGlobals(creds, params.colors, params.typography, onStep);
+    await updateElementorGlobals(creds, params.colors, params.typography);
     onStep('  Elementor globals updated.');
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
