@@ -108,6 +108,7 @@ export async function updateElementorGlobals(
   creds: WpCredentials,
   colors: ElementorColor[],
   typography: ElementorTypography[],
+  onStep?: (msg: string) => void,
 ): Promise<void> {
   // ------------------------------------------------------------------
   // Colours
@@ -117,6 +118,7 @@ export async function updateElementorGlobals(
     const listRes = await wpFetch(creds, '/elementor/v1/globals/colors');
     if (listRes.ok) {
       const data = await listRes.json();
+      onStep?.(`  DEBUG colors response: ${JSON.stringify(data).slice(0, 300)}`);
       // Response may be an object keyed by ID or an array
       existingColors = Array.isArray(data)
         ? data
@@ -130,6 +132,7 @@ export async function updateElementorGlobals(
       (c) => c.title.toLowerCase() === color.title.toLowerCase(),
     );
     const targetId = existing?.id ?? color._id;
+    onStep?.(`  Setting color "${color.title}" → id="${targetId}" value="${color.color}"`);
 
     const res = await wpFetch(creds, `/elementor/v1/globals/colors/${encodeURIComponent(targetId)}`, {
       method: 'POST',
@@ -243,7 +246,7 @@ export async function configureWordPress(
 
   onStep('Updating Elementor global colours and fonts…');
   try {
-    await updateElementorGlobals(creds, params.colors, params.typography);
+    await updateElementorGlobals(creds, params.colors, params.typography, onStep);
     onStep('  Elementor globals updated.');
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
