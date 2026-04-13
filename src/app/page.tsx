@@ -28,6 +28,8 @@ interface Plugin {
   status: string;
 }
 
+type ColorVar = 'primary' | 'secondary' | 'accent' | 'text' | 'white' | 'black';
+
 // ---------------------------------------------------------------------------
 // Page
 // ---------------------------------------------------------------------------
@@ -62,12 +64,12 @@ export default function Home() {
 
   // Elementor theme styles
   const [showThemeStyles, setShowThemeStyles] = useState(false);
-  const [btnBgColor, setBtnBgColor] = useState('');
-  const [btnTextColor, setBtnTextColor] = useState('#ffffff');
-  const [btnHoverBgColor, setBtnHoverBgColor] = useState('');
+  const [btnBgVar, setBtnBgVar] = useState<ColorVar>('accent');
+  const [btnTextVar, setBtnTextVar] = useState<ColorVar>('white');
+  const [btnHoverBgVar, setBtnHoverBgVar] = useState<ColorVar>('primary');
   const [btnBorderRadius, setBtnBorderRadius] = useState(4);
-  const [linkColor, setLinkColor] = useState('');
-  const [linkHoverColor, setLinkHoverColor] = useState('');
+  const [linkColorVar, setLinkColorVar] = useState<ColorVar>('primary');
+  const [linkHoverColorVar, setLinkHoverColorVar] = useState<ColorVar>('accent');
   const [containerWidth, setContainerWidth] = useState(1140);
 
   useEffect(() => {
@@ -91,11 +93,17 @@ export default function Home() {
       .finally(() => setPluginsLoading(false));
   }, []);
 
-  // Keep theme style color defaults in sync with brand colors (only when not manually overridden)
-  useEffect(() => { if (!btnBgColor) setBtnBgColor(accentColor); }, [accentColor]);       // eslint-disable-line react-hooks/exhaustive-deps
-  useEffect(() => { if (!btnHoverBgColor) setBtnHoverBgColor(primaryColor); }, [primaryColor]); // eslint-disable-line react-hooks/exhaustive-deps
-  useEffect(() => { if (!linkColor) setLinkColor(primaryColor); }, [primaryColor]);       // eslint-disable-line react-hooks/exhaustive-deps
-  useEffect(() => { if (!linkHoverColor) setLinkHoverColor(accentColor); }, [accentColor]); // eslint-disable-line react-hooks/exhaustive-deps
+  // Resolve a colour var name to its hex value at submit time
+  function resolveColorVar(v: ColorVar): string {
+    switch (v) {
+      case 'primary':   return primaryColor;
+      case 'secondary': return secondaryColor;
+      case 'accent':    return accentColor;
+      case 'text':      return textColor;
+      case 'white':     return '#ffffff';
+      case 'black':     return '#000000';
+    }
+  }
 
   // Config test
   const [testState, setTestState] = useState<TestState>('idle');
@@ -170,12 +178,12 @@ export default function Home() {
 
     if (showThemeStyles) {
       const ts = {
-        buttonBackgroundColor: btnBgColor || undefined,
-        buttonTextColor: btnTextColor || undefined,
-        buttonHoverBackgroundColor: btnHoverBgColor || undefined,
+        buttonBackgroundColor: resolveColorVar(btnBgVar),
+        buttonTextColor: resolveColorVar(btnTextVar),
+        buttonHoverBackgroundColor: resolveColorVar(btnHoverBgVar),
         buttonBorderRadius: btnBorderRadius,
-        linkColor: linkColor || undefined,
-        linkHoverColor: linkHoverColor || undefined,
+        linkColor: resolveColorVar(linkColorVar),
+        linkHoverColor: resolveColorVar(linkHoverColorVar),
         containerWidth,
       };
       formData.set('themeStyles', JSON.stringify(ts));
@@ -472,9 +480,9 @@ export default function Home() {
               <div>
                 <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-3">Button</p>
                 <div className="grid grid-cols-2 gap-4">
-                  <ControlledColorField name="_btnBgColor" label="Background" value={btnBgColor} onChange={setBtnBgColor} disabled={isSubmitting} />
-                  <ControlledColorField name="_btnTextColor" label="Text" value={btnTextColor} onChange={setBtnTextColor} disabled={isSubmitting} />
-                  <ControlledColorField name="_btnHoverBgColor" label="Hover Background" value={btnHoverBgColor} onChange={setBtnHoverBgColor} disabled={isSubmitting} />
+                  <ColorVarField label="Background" value={btnBgVar} onChange={setBtnBgVar} disabled={isSubmitting} colors={{ primaryColor, secondaryColor, accentColor, textColor }} />
+                  <ColorVarField label="Text" value={btnTextVar} onChange={setBtnTextVar} disabled={isSubmitting} colors={{ primaryColor, secondaryColor, accentColor, textColor }} />
+                  <ColorVarField label="Hover Background" value={btnHoverBgVar} onChange={setBtnHoverBgVar} disabled={isSubmitting} colors={{ primaryColor, secondaryColor, accentColor, textColor }} />
                   <div>
                     <label className="block text-sm font-medium text-gray-700 mb-1">Border Radius (px)</label>
                     <input
@@ -494,8 +502,8 @@ export default function Home() {
               <div>
                 <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-3">Links</p>
                 <div className="grid grid-cols-2 gap-4">
-                  <ControlledColorField name="_linkColor" label="Link Color" value={linkColor} onChange={setLinkColor} disabled={isSubmitting} />
-                  <ControlledColorField name="_linkHoverColor" label="Hover Color" value={linkHoverColor} onChange={setLinkHoverColor} disabled={isSubmitting} />
+                  <ColorVarField label="Link Color" value={linkColorVar} onChange={setLinkColorVar} disabled={isSubmitting} colors={{ primaryColor, secondaryColor, accentColor, textColor }} />
+                  <ColorVarField label="Hover Color" value={linkHoverColorVar} onChange={setLinkHoverColorVar} disabled={isSubmitting} colors={{ primaryColor, secondaryColor, accentColor, textColor }} />
                 </div>
               </div>
 
@@ -718,6 +726,61 @@ function ControlledColorField({
           className="flex-1 font-mono text-sm text-gray-700 focus:outline-none bg-transparent disabled:opacity-50"
           pattern="^#[0-9A-Fa-f]{6}$"
         />
+      </div>
+    </div>
+  );
+}
+
+const COLOR_VAR_OPTIONS: { value: ColorVar; label: string }[] = [
+  { value: 'primary',   label: 'Primary' },
+  { value: 'secondary', label: 'Secondary' },
+  { value: 'accent',    label: 'Accent' },
+  { value: 'text',      label: 'Text' },
+  { value: 'white',     label: 'White' },
+  { value: 'black',     label: 'Black' },
+];
+
+function resolveVar(v: ColorVar, colors: { primaryColor: string; secondaryColor: string; accentColor: string; textColor: string }): string {
+  switch (v) {
+    case 'primary':   return colors.primaryColor;
+    case 'secondary': return colors.secondaryColor;
+    case 'accent':    return colors.accentColor;
+    case 'text':      return colors.textColor;
+    case 'white':     return '#ffffff';
+    case 'black':     return '#000000';
+  }
+}
+
+function ColorVarField({
+  label,
+  value,
+  onChange,
+  disabled,
+  colors,
+}: {
+  label: string;
+  value: ColorVar;
+  onChange: (v: ColorVar) => void;
+  disabled?: boolean;
+  colors: { primaryColor: string; secondaryColor: string; accentColor: string; textColor: string };
+}) {
+  const hex = resolveVar(value, colors);
+  return (
+    <div>
+      <label className="block text-sm font-medium text-gray-700 mb-1">{label}</label>
+      <div className="flex items-center gap-2 rounded-lg border border-gray-200 px-3 py-2 bg-white">
+        <span className="w-5 h-5 rounded flex-shrink-0 border border-gray-200" style={{ backgroundColor: hex }} />
+        <select
+          value={value}
+          onChange={(e) => onChange(e.target.value as ColorVar)}
+          disabled={disabled}
+          className="flex-1 text-sm text-gray-700 focus:outline-none bg-transparent disabled:opacity-50"
+        >
+          {COLOR_VAR_OPTIONS.map((opt) => (
+            <option key={opt.value} value={opt.value}>{opt.label}</option>
+          ))}
+        </select>
+        <span className="font-mono text-xs text-gray-400">{hex}</span>
       </div>
     </div>
   );
