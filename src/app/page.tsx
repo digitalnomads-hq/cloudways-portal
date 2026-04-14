@@ -688,6 +688,9 @@ export default function Home() {
           <div className="bg-white rounded-2xl shadow-xl max-w-md w-full p-6 space-y-4">
             <h2 className="text-base font-semibold text-gray-900">Ready to create site?</h2>
             <p className="text-sm text-gray-500">Review what will be configured before we start.</p>
+            <div className="bg-amber-50 border border-amber-200 rounded-lg px-3 py-2.5 text-xs text-amber-800">
+              <strong>Heads up:</strong> The server needs to provision a new site — this typically takes <strong>2–5 minutes</strong>. Please keep this window open until it completes.
+            </div>
 
             <ul className="text-sm space-y-2">
               <PreflightRow label="Site name" value={siteNameValue || '—'} />
