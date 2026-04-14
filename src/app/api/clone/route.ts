@@ -5,6 +5,7 @@ import type { ElementorColor, ElementorTypography, ElementorThemeStyles } from '
 import { checkPluginUpdates } from '@/lib/wordpress';
 import { deleteDefaultContent, createStandardPages, configureSiteSettings, createNavMenu } from '@/lib/wp-setup';
 import { sendSiteSummary } from '@/lib/email';
+import { getTemplate, TEMPLATES } from '@/lib/templates';
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -44,6 +45,9 @@ export async function POST(req: NextRequest) {
         // 1. Parse form data
         // ----------------------------------------------------------------
         const formData = await req.formData();
+
+        const templateId = (formData.get('templateId') as string | null) ?? 'standard';
+        const template = getTemplate(templateId) ?? TEMPLATES[0];
 
         const siteName = (formData.get('siteName') as string | null)?.trim();
         const tagline = (formData.get('tagline') as string | null)?.trim() ?? '';
@@ -106,24 +110,24 @@ export async function POST(req: NextRequest) {
         // ----------------------------------------------------------------
         // 2. Check plugins on template for available updates
         // ----------------------------------------------------------------
-        if (process.env.TEMPLATE_WP_URL) {
+        if (template.wpUrl) {
           const templateCreds = {
-            baseUrl: process.env.TEMPLATE_WP_URL,
+            baseUrl: template.wpUrl,
             username: process.env.TEMPLATE_WP_USERNAME!,
             appPassword: process.env.TEMPLATE_WP_APP_PASSWORD!,
           };
           await checkPluginUpdates(templateCreds, (msg) => send('status', { step: 2, message: msg }));
         } else {
-          send('status', { step: 2, message: 'TEMPLATE_WP_URL not set — skipping plugin check.' });
+          send('status', { step: 2, message: 'Template URL not set — skipping plugin check.' });
         }
 
         // ----------------------------------------------------------------
         // 3. Clone
         // ----------------------------------------------------------------
         const appLabel = slugify(siteName);
-        send('status', { step: 3, message: `Cloning template as "${appLabel}"…` });
+        send('status', { step: 3, message: `Cloning "${template.name}" as "${appLabel}"…` });
 
-        await cloneApp(appLabel);
+        await cloneApp(appLabel, template.appId);
         send('status', { step: 3, message: 'Clone started. Waiting for it to provision…' });
 
         // ----------------------------------------------------------------

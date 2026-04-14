@@ -49,7 +49,7 @@ function authHeaders(token: string): Record<string, string> {
 }
 
 /** Clone the template app on the same server. */
-export async function cloneApp(newLabel: string): Promise<void> {
+export async function cloneApp(newLabel: string, sourceAppId?: string): Promise<void> {
   const token = await getAccessToken();
 
   const res = await fetch(`${API_BASE}/app/clone`, {
@@ -60,7 +60,7 @@ export async function cloneApp(newLabel: string): Promise<void> {
     },
     body: new URLSearchParams({
       server_id: process.env.CLOUDWAYS_SERVER_ID!,
-      app_id: process.env.CLOUDWAYS_TEMPLATE_APP_ID!,
+      app_id: sourceAppId ?? process.env.CLOUDWAYS_TEMPLATE_APP_ID!,
       app_label: newLabel,
     }),
   });

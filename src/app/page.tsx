@@ -28,6 +28,12 @@ interface Plugin {
   status: string;
 }
 
+interface Template {
+  id: string;
+  name: string;
+  description: string;
+}
+
 type ColorVar = 'primary' | 'secondary' | 'accent' | 'text' | 'white' | 'black';
 
 // ---------------------------------------------------------------------------
@@ -62,6 +68,10 @@ export default function Home() {
   const [pluginsLoading, setPluginsLoading] = useState(false);
   const [showPlugins, setShowPlugins] = useState(false);
 
+  // Templates
+  const [templates, setTemplates] = useState<Template[]>([]);
+  const [selectedTemplate, setSelectedTemplate] = useState('standard');
+
   // Duplicate detection
   const [siteNameValue, setSiteNameValue] = useState('');
   const [duplicateWarning, setDuplicateWarning] = useState<string | null>(null);
@@ -82,6 +92,11 @@ export default function Home() {
   const [containerWidth, setContainerWidth] = useState(1140);
 
   useEffect(() => {
+    fetch('/api/templates')
+      .then((r) => r.json())
+      .then((d: { templates: Template[] }) => setTemplates(d.templates ?? []))
+      .catch(() => {});
+
     fetch('/api/fonts')
       .then((r) => r.json())
       .then((d) => setFonts(d.fonts ?? []))
@@ -209,6 +224,7 @@ export default function Home() {
     e.preventDefault();
 
     const formData = new FormData(e.currentTarget);
+    formData.set('templateId', selectedTemplate);
     formData.set('pluginStates', JSON.stringify(showPlugins ? pluginStates : {}));
 
     if (showThemeStyles) {
@@ -341,6 +357,34 @@ export default function Home() {
 
         {/* Form */}
         <form onSubmit={handleSubmit} className="space-y-6">
+
+          {/* Template selector */}
+          <Card title="Base Template">
+            <div className="grid grid-cols-3 gap-3">
+              {(templates.length > 0 ? templates : [
+                { id: 'standard', name: 'WP Standard', description: 'General-purpose WordPress site' },
+                { id: 'tradie',   name: 'WP Tradie',   description: 'Trades & services businesses' },
+                { id: 'finance',  name: 'WP Finance',  description: 'Finance & professional services' },
+              ]).map((t) => (
+                <button
+                  key={t.id}
+                  type="button"
+                  disabled={isSubmitting}
+                  onClick={() => setSelectedTemplate(t.id)}
+                  className={`rounded-xl border-2 p-4 text-left transition disabled:opacity-50 ${
+                    selectedTemplate === t.id
+                      ? 'border-blue-500 bg-blue-50'
+                      : 'border-gray-200 hover:border-gray-300 bg-white'
+                  }`}
+                >
+                  <p className={`text-sm font-semibold ${selectedTemplate === t.id ? 'text-blue-700' : 'text-gray-800'}`}>
+                    {t.name}
+                  </p>
+                  <p className="text-xs text-gray-500 mt-0.5">{t.description}</p>
+                </button>
+              ))}
+            </div>
+          </Card>
 
           {/* Basic Details */}
           <Card title="Basic Details">
@@ -693,6 +737,7 @@ export default function Home() {
             </div>
 
             <ul className="text-sm space-y-2">
+              <PreflightRow label="Base template" value={(templates.find(t => t.id === selectedTemplate) ?? { name: 'WP Standard' }).name} />
               <PreflightRow label="Site name" value={siteNameValue || '—'} />
               <PreflightRow label="Logo" value={logoPreview ? 'Yes' : 'None'} />
               <PreflightRow label="Favicon" value={faviconPreview ? 'Yes' : 'None'} />
