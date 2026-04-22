@@ -1,7 +1,9 @@
 'use client';
 
 import { useState, useRef, useEffect, useCallback, FormEvent, ChangeEvent } from 'react';
+import Link from 'next/link';
 import FontPicker from '@/components/FontPicker';
+import { loadForm, saveForm, clearForm, saveClone } from '@/lib/storage';
 
 // ---------------------------------------------------------------------------
 // Types
@@ -90,6 +92,73 @@ export default function Home() {
   const [linkColorVar, setLinkColorVar] = useState<ColorVar>('primary');
   const [linkHoverColorVar, setLinkHoverColorVar] = useState<ColorVar>('accent');
   const [containerWidth, setContainerWidth] = useState(1140);
+
+  // Import colours from URL
+  const [importUrl, setImportUrl] = useState('');
+  const [importState, setImportState] = useState<'idle' | 'loading' | 'done' | 'error'>('idle');
+  const [importError, setImportError] = useState('');
+  const [importPalette, setImportPalette] = useState<string[]>([]);
+
+  // Autosave rehydration guard — don't write to localStorage before we've loaded
+  const [hydrated, setHydrated] = useState(false);
+
+  // Rehydrate form state from localStorage on first mount
+  useEffect(() => {
+    const saved = loadForm();
+    if (saved) {
+      if (saved.siteName) setSiteNameValue(saved.siteName);
+      if (saved.selectedTemplate) setSelectedTemplate(saved.selectedTemplate);
+      if (saved.primaryColor) setPrimaryColor(saved.primaryColor);
+      if (saved.secondaryColor) setSecondaryColor(saved.secondaryColor);
+      if (saved.accentColor) setAccentColor(saved.accentColor);
+      if (saved.textColor) setTextColor(saved.textColor);
+      if (saved.headingFont) setHeadingFont(saved.headingFont);
+      if (saved.bodyFont) setBodyFont(saved.bodyFont);
+      if (typeof saved.showPlugins === 'boolean') setShowPlugins(saved.showPlugins);
+      if (saved.pluginStates) setPluginStates(saved.pluginStates);
+      if (typeof saved.showThemeStyles === 'boolean') setShowThemeStyles(saved.showThemeStyles);
+      if (saved.btnBgVar) setBtnBgVar(saved.btnBgVar as ColorVar);
+      if (saved.btnTextVar) setBtnTextVar(saved.btnTextVar as ColorVar);
+      if (saved.btnHoverBgVar) setBtnHoverBgVar(saved.btnHoverBgVar as ColorVar);
+      if (typeof saved.btnBorderRadius === 'number') setBtnBorderRadius(saved.btnBorderRadius);
+      if (saved.linkColorVar) setLinkColorVar(saved.linkColorVar as ColorVar);
+      if (saved.linkHoverColorVar) setLinkHoverColorVar(saved.linkHoverColorVar as ColorVar);
+      if (typeof saved.containerWidth === 'number') setContainerWidth(saved.containerWidth);
+    }
+    setHydrated(true);
+  }, []);
+
+  // Autosave form state whenever any watched field changes
+  useEffect(() => {
+    if (!hydrated) return;
+    saveForm({
+      siteName: siteNameValue,
+      selectedTemplate,
+      primaryColor,
+      secondaryColor,
+      accentColor,
+      textColor,
+      headingFont,
+      bodyFont,
+      showPlugins,
+      pluginStates,
+      showThemeStyles,
+      btnBgVar,
+      btnTextVar,
+      btnHoverBgVar,
+      btnBorderRadius,
+      linkColorVar,
+      linkHoverColorVar,
+      containerWidth,
+    });
+  }, [
+    hydrated, siteNameValue, selectedTemplate,
+    primaryColor, secondaryColor, accentColor, textColor,
+    headingFont, bodyFont,
+    showPlugins, pluginStates,
+    showThemeStyles, btnBgVar, btnTextVar, btnHoverBgVar, btnBorderRadius,
+    linkColorVar, linkHoverColorVar, containerWidth,
+  ]);
 
   useEffect(() => {
     fetch('/api/templates')
@@ -202,6 +271,33 @@ export default function Home() {
     reader.readAsDataURL(file);
   }
 
+  async function handleImportColors() {
+    if (!importUrl.trim()) return;
+    setImportState('loading');
+    setImportError('');
+    setImportPalette([]);
+    try {
+      const res = await fetch(`/api/extract-colors?url=${encodeURIComponent(importUrl.trim())}`);
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error ?? `Request failed (${res.status})`);
+      const palette: string[] = data.palette ?? [];
+      if (palette.length === 0) {
+        setImportError('No distinct brand colours found on that page.');
+        setImportState('error');
+        return;
+      }
+      setImportPalette(palette);
+      // Auto-fill top 4 into Primary/Secondary/Accent/Text (Text falls back to existing)
+      if (palette[0]) setPrimaryColor(palette[0]);
+      if (palette[1]) setSecondaryColor(palette[1]);
+      if (palette[2]) setAccentColor(palette[2]);
+      setImportState('done');
+    } catch (err) {
+      setImportError(err instanceof Error ? err.message : String(err));
+      setImportState('error');
+    }
+  }
+
   async function handleDeleteApp() {
     if (!partialAppId) return;
     setDeleteState('deleting');
@@ -285,6 +381,18 @@ export default function Home() {
               addMessage(parsed.message);
               setResult({ siteUrl: parsed.siteUrl, adminUrl: parsed.adminUrl, appId: parsed.cloudwaysAppId });
               setFormState('complete');
+              const template = templates.find((t) => t.id === selectedTemplate);
+              saveClone({
+                appId: parsed.cloudwaysAppId,
+                siteName: siteNameValue,
+                siteUrl: parsed.siteUrl,
+                adminUrl: parsed.adminUrl,
+                templateId: selectedTemplate,
+                templateName: template?.name ?? selectedTemplate,
+                primaryColor,
+                createdAt: new Date().toISOString(),
+              });
+              clearForm();
             } else if (parsed.event === 'error') {
               setErrorMsg(parsed.message);
               if (parsed.cloudwaysAppId) setPartialAppId(parsed.cloudwaysAppId);
@@ -308,11 +416,19 @@ export default function Home() {
       <div className="max-w-2xl mx-auto">
 
         {/* Header */}
-        <div className="mb-8">
-          <h1 className="text-3xl font-bold text-gray-900">New WordPress Site</h1>
-          <p className="mt-1 text-gray-500 text-sm">
-            Fill in the details below — we&apos;ll clone the framework site and configure it automatically.
-          </p>
+        <div className="mb-8 flex items-start justify-between gap-4">
+          <div>
+            <h1 className="text-3xl font-bold text-gray-900">New WordPress Site</h1>
+            <p className="mt-1 text-gray-500 text-sm">
+              Fill in the details below — we&apos;ll clone the framework site and configure it automatically.
+            </p>
+          </div>
+          <Link
+            href="/sites"
+            className="shrink-0 rounded-lg border border-gray-200 bg-white px-3 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50 transition"
+          >
+            Clone history →
+          </Link>
         </div>
 
         {/* Config test */}
@@ -470,6 +586,51 @@ export default function Home() {
 
           {/* Brand Colours */}
           <Card title="Brand Colours">
+            {/* Import from URL */}
+            <div className="rounded-xl border border-dashed border-gray-200 bg-gray-50 p-3">
+              <p className="text-xs font-medium text-gray-500 mb-2">Import from a website</p>
+              <div className="flex gap-2">
+                <input
+                  type="url"
+                  placeholder="https://example.com"
+                  value={importUrl}
+                  onChange={(e) => setImportUrl(e.target.value)}
+                  disabled={isSubmitting || importState === 'loading'}
+                  className={inputCls}
+                />
+                <button
+                  type="button"
+                  onClick={handleImportColors}
+                  disabled={isSubmitting || importState === 'loading' || !importUrl.trim()}
+                  className="shrink-0 rounded-lg bg-gray-800 px-3 py-2 text-xs font-semibold text-white hover:bg-gray-900 disabled:opacity-50 disabled:cursor-not-allowed transition"
+                >
+                  {importState === 'loading' ? 'Scanning…' : 'Import'}
+                </button>
+              </div>
+              {importState === 'error' && importError && (
+                <p className="mt-2 text-xs text-red-600">⚠ {importError}</p>
+              )}
+              {importState === 'done' && importPalette.length > 0 && (
+                <div className="mt-2">
+                  <p className="text-xs text-gray-500 mb-1.5">
+                    Top {importPalette.length} colours applied to Primary/Secondary/Accent — click to use:
+                  </p>
+                  <div className="flex gap-1.5 flex-wrap">
+                    {importPalette.map((c) => (
+                      <button
+                        key={c}
+                        type="button"
+                        onClick={() => setPrimaryColor(c)}
+                        title={`${c} — click to set as Primary`}
+                        className="w-7 h-7 rounded border border-gray-200 hover:scale-110 transition"
+                        style={{ backgroundColor: c }}
+                      />
+                    ))}
+                  </div>
+                </div>
+              )}
+            </div>
+
             <div className="grid grid-cols-2 gap-4">
               <ControlledColorField name="primaryColor" label="Primary" value={primaryColor} onChange={setPrimaryColor} disabled={isSubmitting} />
               <ControlledColorField name="secondaryColor" label="Secondary" value={secondaryColor} onChange={setSecondaryColor} disabled={isSubmitting} />
