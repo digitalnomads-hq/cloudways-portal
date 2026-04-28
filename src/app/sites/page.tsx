@@ -1,13 +1,15 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useState, Fragment } from 'react';
 import Link from 'next/link';
 import { loadHistory, removeClone, type CloneRecord } from '@/lib/storage';
+import ImageUploader from '@/components/ImageUploader';
 
 export default function SitesPage() {
   const [history, setHistory] = useState<CloneRecord[]>([]);
   const [deleting, setDeleting] = useState<string | null>(null);
   const [loaded, setLoaded] = useState(false);
+  const [uploadOpen, setUploadOpen] = useState<string | null>(null);
 
   useEffect(() => {
     setHistory(loadHistory());
@@ -76,7 +78,8 @@ export default function SitesPage() {
               </thead>
               <tbody className="divide-y divide-gray-100">
                 {history.map((r) => (
-                  <tr key={r.appId} className="hover:bg-gray-50">
+                  <Fragment key={r.appId}>
+                  <tr className="hover:bg-gray-50">
                     <td className="px-5 py-3">
                       <div className="flex items-center gap-3">
                         <span
@@ -112,6 +115,16 @@ export default function SitesPage() {
                           Admin
                         </a>
                         <button
+                          onClick={() => setUploadOpen(uploadOpen === r.appId ? null : r.appId)}
+                          className={`rounded-md border px-2.5 py-1 text-xs font-medium ${
+                            uploadOpen === r.appId
+                              ? 'border-blue-300 bg-blue-50 text-blue-700'
+                              : 'border-gray-200 text-gray-700 hover:bg-gray-100'
+                          }`}
+                        >
+                          {uploadOpen === r.appId ? 'Close' : 'Images'}
+                        </button>
+                        <button
                           onClick={() => handleForget(r.appId)}
                           className="rounded-md border border-gray-200 px-2.5 py-1 text-xs font-medium text-gray-500 hover:bg-gray-100"
                           title="Remove from history only"
@@ -128,6 +141,14 @@ export default function SitesPage() {
                       </div>
                     </td>
                   </tr>
+                  {uploadOpen === r.appId && (
+                    <tr className="bg-gray-50">
+                      <td colSpan={4} className="px-5 py-4">
+                        <ImageUploader siteUrl={r.siteUrl} compact label={`Upload to ${r.siteName}`} />
+                      </td>
+                    </tr>
+                  )}
+                  </Fragment>
                 ))}
               </tbody>
             </table>

@@ -3,6 +3,7 @@
 import { useState, useRef, useEffect, useCallback, FormEvent, ChangeEvent } from 'react';
 import Link from 'next/link';
 import FontPicker from '@/components/FontPicker';
+import ImageUploader from '@/components/ImageUploader';
 import { loadForm, saveForm, clearForm, saveClone } from '@/lib/storage';
 
 // ---------------------------------------------------------------------------
@@ -850,6 +851,11 @@ export default function Home() {
               </a>
             )}
             <p className="mt-3 text-xs text-green-600">Cloudways App ID: {result.appId}</p>
+
+            <div className="mt-5 pt-5 border-t border-green-200">
+              <h3 className="text-sm font-semibold text-green-800 mb-2">Upload images to media library</h3>
+              <ImageUploader siteUrl={result.siteUrl} compact />
+            </div>
           </div>
         )}
 
