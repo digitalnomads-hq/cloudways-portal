@@ -1,0 +1,70 @@
+# Render Blueprint — https://render.com/docs/blueprint-spec
+#
+# Deploy: Render dashboard → New → Blueprint → pick this repo.
+# Every value below with `sync: false` must be filled in from the dashboard;
+# nothing secret is committed here.
+
+services:
+  - type: web
+    name: cloudways-portal
+    runtime: docker
+    dockerfilePath: ./Dockerfile
+    plan: free
+    # Closest Render region to Sydney; change if your team is elsewhere.
+    region: singapore
+    healthCheckPath: /api/health
+
+    envVars:
+      # --- Portal auth ---
+      # PORTAL_PASSWORD is what you type on the login page.
+      # PORTAL_SECRET is the session cookie value — rotate it to sign everyone out.
+      - key: PORTAL_PASSWORD
+        sync: false
+      - key: PORTAL_SECRET
+        generateValue: true
+
+      # --- Cloudways API ---
+      - key: CLOUDWAYS_EMAIL
+        sync: false
+      - key: CLOUDWAYS_API_KEY
+        sync: false
+      - key: CLOUDWAYS_SERVER_ID
+        sync: false
+      - key: CLOUDWAYS_TEMPLATE_APP_ID
+        sync: false
+
+      # --- Template WordPress site (application password, not the login password) ---
+      - key: TEMPLATE_WP_URL
+        sync: false
+      - key: TEMPLATE_WP_USERNAME
+        sync: false
+      - key: TEMPLATE_WP_APP_PASSWORD
+        sync: false
+      - key: TEMPLATE_WP_PATH
+        sync: false
+
+      # --- SMTP (optional — summary emails are skipped if unset) ---
+      - key: SMTP_HOST
+        sync: false
+      - key: SMTP_PORT
+        sync: false
+      - key: SMTP_SECURE
+        sync: false
+      - key: SMTP_USER
+        sync: false
+      - key: SMTP_PASS
+        sync: false
+      - key: SMTP_FROM
+        sync: false
+
+      # --- SSH (optional — only used by the /api/test diagnostics) ---
+      # Paste the key itself into SSH_PRIVATE_KEY; SSH_KEY_PATH does not work on
+      # Render because the container filesystem is ephemeral.
+      - key: SSH_HOST
+        sync: false
+      - key: SSH_PORT
+        sync: false
+      - key: SSH_USER
+        sync: false
+      - key: SSH_PRIVATE_KEY
+        sync: false

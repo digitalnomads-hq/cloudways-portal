@@ -1,0 +1,11 @@
+node_modules
+.next
+.git
+.claude
+scripts
+npm-debug.log*
+.DS_Store
+
+# Never bake secrets into an image layer — set these in the Render dashboard.
+.env
+.env.*
