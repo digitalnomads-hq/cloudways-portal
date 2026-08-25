@@ -98,6 +98,27 @@ export async function query<T extends Record<string, unknown> = Record<string, u
   return res.rows as T[];
 }
 
+export type DbStatus =
+  | { state: 'not-configured' }
+  | { state: 'ok' }
+  | { state: 'error'; message: string };
+
+/**
+ * Report whether the database is usable, distinguishing "no DATABASE_URL" from
+ * "configured but failing". The read paths deliberately swallow errors to stay
+ * available, which otherwise makes a broken connection look identical to an
+ * absent one.
+ */
+export async function dbStatus(): Promise<DbStatus> {
+  if (!isDbConfigured()) return { state: 'not-configured' };
+  try {
+    await query('SELECT 1');
+    return { state: 'ok' };
+  } catch (err) {
+    return { state: 'error', message: err instanceof Error ? err.message : String(err) };
+  }
+}
+
 /**
  * Run a query, returning null instead of throwing when the database is absent
  * or unreachable. Used on read paths where a degraded view beats an error page.
