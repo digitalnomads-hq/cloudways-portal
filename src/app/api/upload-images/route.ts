@@ -1,13 +1,27 @@
 import { NextRequest } from 'next/server';
 import { uploadLogo } from '@/lib/wordpress';
+import { listApps } from '@/lib/cloudways';
 
 // Bulk upload images to a cloned site's WordPress media library.
 // Streams per-file results back via SSE so a long batch surfaces progress.
+//
+// The target is chosen by appId and resolved against the Cloudways app list —
+// never taken from the request as a URL. This endpoint sends the WordPress
+// application password as Basic auth, so accepting a caller-supplied address
+// would let anyone with the portal password point it at a host they control
+// and collect credentials that grant admin on every site we manage.
 
 export const maxDuration = 300;
 
 function sseEvent(data: object): string {
   return `data: ${JSON.stringify(data)}\n\n`;
+}
+
+/** Resolve an app id to its site URL using Cloudways as the source of truth. */
+async function resolveSiteUrl(appId: string): Promise<string | null> {
+  const app = (await listApps()).find((a) => a.id === appId);
+  if (!app) return null;
+  return app.app_fqdn ? `https://${app.app_fqdn}` : `http://${app.cname}`;
 }
 
 export async function POST(req: NextRequest) {
@@ -21,9 +35,9 @@ export async function POST(req: NextRequest) {
 
       try {
         const formData = await req.formData();
-        const siteUrl = (formData.get('siteUrl') as string | null)?.trim();
-        if (!siteUrl) {
-          send('error', { message: 'siteUrl is required' });
+        const appId = (formData.get('appId') as string | null)?.trim();
+        if (!appId) {
+          send('error', { message: 'appId is required' });
           controller.close();
           return;
         }
@@ -31,6 +45,13 @@ export async function POST(req: NextRequest) {
         const files = formData.getAll('images').filter((f): f is File => f instanceof File);
         if (files.length === 0) {
           send('error', { message: 'No images provided' });
+          controller.close();
+          return;
+        }
+
+        const siteUrl = await resolveSiteUrl(appId);
+        if (!siteUrl) {
+          send('error', { message: 'Unknown app — it is not on the configured Cloudways server.' });
           controller.close();
           return;
         }

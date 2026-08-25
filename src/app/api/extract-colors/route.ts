@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { assertPublicUrl, safeFetch } from '@/lib/net-guard';
 
 // Extract a brand colour palette by scanning a page + its stylesheets for
 // hex/rgb colour values. Returns the most frequent distinct, non-grayscale
@@ -58,10 +59,12 @@ function colorDistance(a: string, b: string): number {
 }
 
 async function fetchText(url: string, signal: AbortSignal): Promise<string> {
-  const res = await fetch(url, {
+  // safeFetch re-validates every redirect hop — a public URL is free to
+  // redirect to a private one, so validating only the starting URL would not
+  // actually prevent reaching the internal network.
+  const res = await safeFetch(new URL(url), {
     headers: { 'User-Agent': UA, Accept: 'text/html,text/css,*/*;q=0.8' },
     signal,
-    redirect: 'follow',
   });
   if (!res.ok) throw new Error(`Fetch failed ${res.status}`);
   return await res.text();
@@ -80,8 +83,15 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({ error: 'Invalid URL' }, { status: 400 });
   }
 
-  if (target.protocol !== 'http:' && target.protocol !== 'https:') {
-    return NextResponse.json({ error: 'Only http(s) URLs allowed' }, { status: 400 });
+  // Refuse anything that is not publicly routable before making any request,
+  // so this endpoint cannot be used to probe the deployment's own network.
+  try {
+    await assertPublicUrl(target);
+  } catch (err) {
+    return NextResponse.json(
+      { error: err instanceof Error ? err.message : 'That URL is not allowed.' },
+      { status: 400 },
+    );
   }
 
   const controller = new AbortController();

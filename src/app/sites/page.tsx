@@ -301,7 +301,7 @@ export default function SitesPage() {
                     {uploadOpen === r.appId && (
                       <tr className="bg-gray-50">
                         <td colSpan={5} className="px-5 py-4">
-                          <ImageUploader siteUrl={r.siteUrl} compact label={`Upload to ${r.siteName}`} />
+                          <ImageUploader appId={r.appId} compact label={`Upload to ${r.siteName}`} />
                         </td>
                       </tr>
                     )}

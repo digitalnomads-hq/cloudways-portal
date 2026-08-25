@@ -9,14 +9,15 @@ interface FileResult {
 }
 
 interface Props {
-  siteUrl: string;
+  /** Cloudways app id — the server resolves the site URL from it. */
+  appId: string;
   /** Optional label shown above the dropzone. */
   label?: string;
   /** Compact variant (smaller padding) for inline use in lists. */
   compact?: boolean;
 }
 
-export default function ImageUploader({ siteUrl, label, compact }: Props) {
+export default function ImageUploader({ appId, label, compact }: Props) {
   const inputRef = useRef<HTMLInputElement>(null);
   const [files, setFiles] = useState<File[]>([]);
   const [results, setResults] = useState<Record<string, FileResult>>({});
@@ -59,7 +60,7 @@ export default function ImageUploader({ siteUrl, label, compact }: Props) {
     setSummary(null);
 
     const formData = new FormData();
-    formData.set('siteUrl', siteUrl);
+    formData.set('appId', appId);
     for (const f of files) formData.append('images', f);
 
     try {

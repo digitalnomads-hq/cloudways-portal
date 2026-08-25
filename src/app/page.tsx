@@ -903,7 +903,7 @@ export default function Home() {
 
             <div className="mt-5 pt-5 border-t border-green-200">
               <h3 className="text-sm font-semibold text-green-800 mb-2">Upload images to media library</h3>
-              <ImageUploader siteUrl={result.siteUrl} compact />
+              <ImageUploader appId={result.appId} compact />
             </div>
           </div>
         )}
@@ -949,7 +949,7 @@ export default function Home() {
             <h2 className="text-base font-semibold text-gray-900">Ready to create site?</h2>
             <p className="text-sm text-gray-500">Review what will be configured before we start.</p>
             <div className="bg-amber-50 border border-amber-200 rounded-lg px-3 py-2.5 text-xs text-amber-800">
-              <strong>Heads up:</strong> The server needs to provision a new site — this typically takes <strong>2–5 minutes</strong>. Please keep this window open until it completes.
+              <strong>Heads up:</strong> Provisioning a new site typically takes <strong>10–15 minutes</strong>. You can close this tab — the build keeps running, and you can pick the progress back up from the Sites page.
             </div>
 
             <ul className="text-sm space-y-2">
