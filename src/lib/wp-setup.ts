@@ -82,21 +82,46 @@ export async function createNavMenu(
 ): Promise<void> {
   onStep('Creating navigation menu…');
 
-  const menuRes = await wpFetch(creds, '/wp/v2/menus', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ name: 'Primary Menu' }),
-  }, onStep);
+  // Reuse an existing Primary Menu if there is one, so a resumed build does not
+  // leave the site with a second menu and duplicated items.
+  let menuId: number | null = null;
 
-  if (!menuRes.ok) {
-    onStep(`  Could not create menu (${menuRes.status}) — skipping`);
-    return;
+  const existingRes = await wpFetch(creds, '/wp/v2/menus?search=Primary%20Menu&per_page=20');
+  if (existingRes.ok) {
+    const menus: Array<{ id: number; name: string }> = await existingRes.json();
+    menuId = menus.find((m) => m.name?.trim().toLowerCase() === 'primary menu')?.id ?? null;
+    if (menuId) onStep(`  Reusing existing Primary Menu (ID ${menuId})`);
   }
 
-  const menu = await menuRes.json();
-  const menuId: number = menu.id;
+  if (!menuId) {
+    const menuRes = await wpFetch(creds, '/wp/v2/menus', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name: 'Primary Menu' }),
+    }, onStep);
+
+    if (!menuRes.ok) {
+      onStep(`  Could not create menu (${menuRes.status}) — skipping`);
+      return;
+    }
+    menuId = (await menuRes.json()).id as number;
+  }
+
+  // Existing items, so we only add what is missing.
+  const existingTitles = new Set<string>();
+  const itemsRes = await wpFetch(creds, `/wp/v2/menu-items?menus=${menuId}&per_page=100`);
+  if (itemsRes.ok) {
+    const items: Array<{ title: { rendered: string } }> = await itemsRes.json();
+    for (const it of items) {
+      if (it.title?.rendered) existingTitles.add(it.title.rendered.trim().toLowerCase());
+    }
+  }
 
   for (const page of pages) {
+    if (existingTitles.has(page.title.toLowerCase())) {
+      onStep(`  "${page.title}" already in menu`);
+      continue;
+    }
     const itemRes = await wpFetch(creds, '/wp/v2/menu-items', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -164,6 +189,27 @@ const PAGE_DEFINITIONS = [
   },
 ];
 
+/**
+ * Look up an existing page by exact title.
+ *
+ * Makes page creation idempotent, which a resumed build depends on — otherwise
+ * re-running this phase would leave the site with two of every page.
+ */
+async function findPageByTitle(creds: WpCredentials, title: string): Promise<number | null> {
+  const res = await wpFetch(
+    creds,
+    `/wp/v2/pages?search=${encodeURIComponent(title)}&status=publish,draft&per_page=20`,
+  );
+  if (!res.ok) return null;
+
+  const pages: Array<{ id: number; title: { rendered: string } }> = await res.json();
+  // `search` is fuzzy, so confirm the title actually matches before reusing it.
+  const match = pages.find(
+    (p) => p.title?.rendered?.trim().toLowerCase() === title.toLowerCase(),
+  );
+  return match?.id ?? null;
+}
+
 export async function createStandardPages(
   creds: WpCredentials,
   onStep: (msg: string) => void,
@@ -173,6 +219,13 @@ export async function createStandardPages(
   const ids: Partial<StandardPages> = {};
 
   for (const page of PAGE_DEFINITIONS) {
+    const existing = await findPageByTitle(creds, page.title);
+    if (existing) {
+      ids[page.key] = existing;
+      onStep(`  Page already exists: ${page.title} (ID ${existing})`);
+      continue;
+    }
+
     const res = await wpFetch(creds, '/wp/v2/pages', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -193,4 +246,24 @@ export async function createStandardPages(
   }
 
   return ids as StandardPages;
+}
+
+/**
+ * Turn search engine indexing on or off (the "Discourage search engines"
+ * setting). New sites are created with indexing off; this is what flips it
+ * back on at launch.
+ */
+export async function setSearchIndexing(
+  creds: WpCredentials,
+  enabled: boolean,
+): Promise<void> {
+  const res = await wpFetch(creds, '/wp/v2/settings', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ blog_public: enabled }),
+  });
+
+  if (!res.ok) {
+    throw new Error(`Could not update indexing setting (${res.status}): ${(await res.text()).slice(0, 200)}`);
+  }
 }

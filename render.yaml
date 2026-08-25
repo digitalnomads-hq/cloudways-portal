@@ -15,6 +15,14 @@ services:
     healthCheckPath: /api/health
 
     envVars:
+      # --- Shared site registry + resumable builds ---
+      # Without this the portal still provisions sites, but the shared site
+      # list stays empty and failed builds cannot be resumed.
+      - key: DATABASE_URL
+        fromDatabase:
+          name: cloudways-portal-db
+          property: connectionString
+
       # --- Portal auth ---
       # PORTAL_PASSWORD is what you type on the login page.
       # PORTAL_SECRET is the session cookie value — rotate it to sign everyone out.
@@ -68,3 +76,13 @@ services:
         sync: false
       - key: SSH_PRIVATE_KEY
         sync: false
+
+databases:
+  - name: cloudways-portal-db
+    plan: free
+    region: singapore
+    # NOTE: Render deletes free Postgres instances after 30 days. When that
+    # happens the site list and job checkpoints are lost (provisioning itself
+    # keeps working). To make it permanent, either move this to a paid plan or
+    # point DATABASE_URL at an external free Postgres such as Neon — the schema
+    # is plain Postgres and needs no changes.

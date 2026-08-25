@@ -44,6 +44,21 @@ deleting the partial app and re-running.
 
 Set these in the host's dashboard. Never commit them.
 
+### Database (shared site registry + resumable builds)
+| Key | Notes |
+|---|---|
+| `DATABASE_URL` | Postgres connection string. Wired automatically by `render.yaml` |
+
+Optional, but two features depend on it: the shared site list, and resuming a
+failed build. Without it, provisioning still works — `/sites` shows a warning
+and stays empty, and resume is unavailable. Tables are created automatically on
+first use.
+
+**Render's free Postgres is deleted after 30 days.** Losing it costs the site
+list and job checkpoints, not any actual site. For something permanent, move the
+database to a paid plan or point `DATABASE_URL` at an external free Postgres
+(Neon, Supabase) — the schema is plain Postgres and needs no changes.
+
 ### Portal auth
 | Key | Notes |
 |---|---|

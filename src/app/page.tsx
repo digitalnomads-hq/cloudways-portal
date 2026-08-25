@@ -4,7 +4,7 @@ import { useState, useRef, useEffect, useCallback, FormEvent, ChangeEvent } from
 import Link from 'next/link';
 import FontPicker from '@/components/FontPicker';
 import ImageUploader from '@/components/ImageUploader';
-import { loadForm, saveForm, clearForm, saveClone } from '@/lib/storage';
+import { loadForm, saveForm, clearForm } from '@/lib/storage';
 
 // ---------------------------------------------------------------------------
 // Types
@@ -160,6 +160,25 @@ export default function Home() {
     showThemeStyles, btnBgVar, btnTextVar, btnHoverBgVar, btnBorderRadius,
     linkColorVar, linkHoverColorVar, containerWidth,
   ]);
+
+  // Attach to a job already running on the server — used when /sites hands off
+  // a resumed build, and equally after a reload while a build is in flight.
+  useEffect(() => {
+    const jobId = new URLSearchParams(window.location.search).get('job');
+    if (!jobId) return;
+
+    // Drop the param so a refresh doesn't re-attach to a finished job.
+    window.history.replaceState({}, '', window.location.pathname);
+
+    setFormState('submitting');
+    setStatusMessages([]);
+    followJob(jobId).catch((err) => {
+      setErrorMsg(err instanceof Error ? err.message : String(err));
+      setFormState('error');
+    });
+    // followJob is stable for this purpose — attaching once on mount is intended.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   useEffect(() => {
     fetch('/api/templates')
@@ -409,17 +428,8 @@ export default function Home() {
                 addMessage(parsed.message);
                 setResult({ siteUrl: parsed.siteUrl, adminUrl: parsed.adminUrl, appId: parsed.cloudwaysAppId });
                 setFormState('complete');
-                const template = templates.find((t) => t.id === selectedTemplate);
-                saveClone({
-                  appId: parsed.cloudwaysAppId,
-                  siteName: siteNameValue,
-                  siteUrl: parsed.siteUrl,
-                  adminUrl: parsed.adminUrl,
-                  templateId: selectedTemplate,
-                  templateName: template?.name ?? selectedTemplate,
-                  primaryColor,
-                  createdAt: new Date().toISOString(),
-                });
+                // The server records the site in the shared registry — see
+                // src/lib/registry.ts. Nothing to persist locally.
                 clearForm();
               } else if (parsed.event === 'error') {
                 finished = true;

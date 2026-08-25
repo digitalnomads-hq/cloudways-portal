@@ -1,7 +1,10 @@
-// Client-side localStorage helpers for form autosave + clone history.
+// Client-side localStorage helpers for form autosave.
+//
+// Clone history used to live here too, but a per-browser list meant nobody
+// could see anyone else's sites. It now lives server-side in the shared
+// registry (src/lib/registry.ts).
 
 const FORM_KEY = 'cloudways-portal:form';
-const HISTORY_KEY = 'cloudways-portal:clones';
 
 export interface SavedFormState {
   siteName?: string;
@@ -49,49 +52,6 @@ export function clearForm(): void {
   if (typeof window === 'undefined') return;
   try {
     window.localStorage.removeItem(FORM_KEY);
-  } catch {
-    // Ignore
-  }
-}
-
-export interface CloneRecord {
-  appId: string;
-  siteName: string;
-  siteUrl: string;
-  adminUrl: string;
-  templateId: string;
-  templateName: string;
-  primaryColor: string;
-  createdAt: string; // ISO
-}
-
-export function loadHistory(): CloneRecord[] {
-  if (typeof window === 'undefined') return [];
-  try {
-    const raw = window.localStorage.getItem(HISTORY_KEY);
-    return raw ? (JSON.parse(raw) as CloneRecord[]) : [];
-  } catch {
-    return [];
-  }
-}
-
-export function saveClone(record: CloneRecord): void {
-  if (typeof window === 'undefined') return;
-  try {
-    const existing = loadHistory();
-    const deduped = existing.filter((r) => r.appId !== record.appId);
-    const next = [record, ...deduped].slice(0, 100);
-    window.localStorage.setItem(HISTORY_KEY, JSON.stringify(next));
-  } catch {
-    // Ignore
-  }
-}
-
-export function removeClone(appId: string): void {
-  if (typeof window === 'undefined') return;
-  try {
-    const next = loadHistory().filter((r) => r.appId !== appId);
-    window.localStorage.setItem(HISTORY_KEY, JSON.stringify(next));
   } catch {
     // Ignore
   }
