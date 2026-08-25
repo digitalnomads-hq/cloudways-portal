@@ -1,25 +1,7 @@
 import type { WpCredentials } from './wordpress';
+import { wpFetch } from './wordpress';
 
 export interface NavPage { title: string; id: number; }
-
-// ---------------------------------------------------------------------------
-// Helpers
-// ---------------------------------------------------------------------------
-
-function basicAuth(username: string, password: string) {
-  return `Basic ${Buffer.from(`${username}:${password}`).toString('base64')}`;
-}
-
-async function wpFetch(creds: WpCredentials, path: string, options: RequestInit = {}) {
-  const url = `${creds.baseUrl.replace(/\/$/, '')}/wp-json${path}`;
-  return fetch(url, {
-    ...options,
-    headers: {
-      Authorization: basicAuth(creds.username, creds.appPassword),
-      ...(options.headers as Record<string, string>),
-    },
-  });
-}
 
 // ---------------------------------------------------------------------------
 // 1. Delete default content
@@ -42,7 +24,7 @@ export async function deleteDefaultContent(
   ];
 
   for (const { type, path } of deletes) {
-    const res = await wpFetch(creds, path, { method: 'DELETE' });
+    const res = await wpFetch(creds, path, { method: 'DELETE' }, onStep);
     if (res.ok) {
       onStep(`  Deleted ${type}`);
     } else if (res.status === 404) {
@@ -77,7 +59,7 @@ export async function configureSiteSettings(
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(settings),
-  });
+  }, onStep);
 
   if (!res.ok) {
     onStep(`  Settings update returned ${res.status} — some settings may not have applied`);
@@ -104,7 +86,7 @@ export async function createNavMenu(
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ name: 'Primary Menu' }),
-  });
+  }, onStep);
 
   if (!menuRes.ok) {
     onStep(`  Could not create menu (${menuRes.status}) — skipping`);
@@ -126,7 +108,7 @@ export async function createNavMenu(
         menus: menuId,
         status: 'publish',
       }),
-    });
+    }, onStep);
     onStep(itemRes.ok ? `  Added "${page.title}" to menu` : `  Could not add "${page.title}" (${itemRes.status})`);
   }
 
@@ -135,7 +117,7 @@ export async function createNavMenu(
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ locations: ['primary'] }),
-  });
+  }, onStep);
   onStep(assignRes.ok
     ? '  Assigned to primary menu location'
     : '  Could not auto-assign menu location — assign manually in Appearance → Menus',
@@ -199,7 +181,7 @@ export async function createStandardPages(
         status: 'publish',
         content: page.content,
       }),
-    });
+    }, onStep);
 
     if (!res.ok) {
       throw new Error(`Failed to create "${page.title}" page (${res.status}): ${await res.text()}`);

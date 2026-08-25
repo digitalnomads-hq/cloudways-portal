@@ -1,3 +1,5 @@
+import { fetchWithRetry, fetchOnce } from './http';
+
 const API_BASE = 'https://api.cloudways.com/api/v1';
 
 export interface CloudwaysApp {
@@ -19,12 +21,12 @@ export interface CloudwaysServer {
 
 let cachedToken: { value: string; expiresAt: number } | null = null;
 
-async function getAccessToken(): Promise<string> {
-  if (cachedToken && Date.now() < cachedToken.expiresAt) {
+async function getAccessToken(forceRefresh = false): Promise<string> {
+  if (!forceRefresh && cachedToken && Date.now() < cachedToken.expiresAt) {
     return cachedToken.value;
   }
 
-  const res = await fetch(`${API_BASE}/oauth/access_token`, {
+  const res = await fetchWithRetry(`${API_BASE}/oauth/access_token`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
     body: new URLSearchParams({
@@ -48,11 +50,39 @@ function authHeaders(token: string): Record<string, string> {
   return { Authorization: `Bearer ${token}` };
 }
 
-/** Clone the template app on the same server. */
+/**
+ * Authenticated Cloudways request that transparently re-auths once on 401.
+ * A clone can run well past the token lifetime, so a mid-run expiry is normal
+ * rather than exceptional.
+ */
+async function cwFetch(path: string, init: RequestInit = {}): Promise<Response> {
+  const token = await getAccessToken();
+  const withAuth = (t: string): RequestInit => ({
+    ...init,
+    headers: { ...authHeaders(t), ...(init.headers as Record<string, string>) },
+  });
+
+  let res = await fetchWithRetry(`${API_BASE}${path}`, withAuth(token));
+
+  if (res.status === 401) {
+    const fresh = await getAccessToken(true);
+    res = await fetchWithRetry(`${API_BASE}${path}`, withAuth(fresh));
+  }
+
+  return res;
+}
+
+/**
+ * Clone the template app on the same server.
+ *
+ * Deliberately not retried: a retried clone that actually succeeded the first
+ * time would leave a duplicate app behind, which is worse than surfacing the
+ * error.
+ */
 export async function cloneApp(newLabel: string, sourceAppId?: string): Promise<void> {
   const token = await getAccessToken();
 
-  const res = await fetch(`${API_BASE}/app/clone`, {
+  const res = await fetchOnce(`${API_BASE}/app/clone`, {
     method: 'POST',
     headers: {
       ...authHeaders(token),
@@ -63,7 +93,7 @@ export async function cloneApp(newLabel: string, sourceAppId?: string): Promise<
       app_id: sourceAppId ?? process.env.CLOUDWAYS_TEMPLATE_APP_ID!,
       app_label: newLabel,
     }),
-  });
+  }, 60000);
 
   if (!res.ok) {
     const text = await res.text();
@@ -76,63 +106,88 @@ export async function cloneApp(newLabel: string, sourceAppId?: string): Promise<
 
 /**
  * Wait until a cloned app appears in the server's app list.
- * More reliable than polling the operation endpoint directly.
+ *
+ * Transient API failures are tolerated: Cloudways returns 502/429 under load,
+ * and letting one of those escape would abort a clone that is already running
+ * on their side — orphaning the app. Only a sustained failure run gives up.
  */
 export async function waitForClone(
   appLabel: string,
   onProgress?: (message: string) => void,
-  intervalMs = 10000,
-  timeoutMs = 15 * 60 * 1000,
+  options: { excludeAppIds?: Set<string>; intervalMs?: number; timeoutMs?: number } = {},
 ): Promise<CloudwaysApp> {
+  const { excludeAppIds, intervalMs = 10000, timeoutMs = 15 * 60 * 1000 } = options;
   const deadline = Date.now() + timeoutMs;
-  let attempts = 0;
+  const started = Date.now();
+  let consecutiveErrors = 0;
 
   while (Date.now() < deadline) {
+    try {
+      const app = await findAppByLabel(appLabel);
+      // Only accept an app that did not exist before we started. A leftover app
+      // from an earlier failed run shares the label, and matching it would mean
+      // silently reconfiguring the wrong site.
+      if (app && !excludeAppIds?.has(app.id)) return app;
+      consecutiveErrors = 0;
+    } catch (err) {
+      consecutiveErrors++;
+      const reason = err instanceof Error ? err.message : String(err);
+      // 5 consecutive failures (~50s of a dead API) means something is actually
+      // wrong, not a blip.
+      if (consecutiveErrors >= 5) {
+        throw new Error(`Cloudways API unreachable while waiting for clone: ${reason}`);
+      }
+      onProgress?.(`Cloudways API error (${reason.slice(0, 80)}) — retrying…`);
+    }
+
     await sleep(intervalMs);
-    attempts++;
-
-    const app = await findAppByLabel(appLabel);
-    if (app) return app;
-
-    const elapsed = Math.round((attempts * intervalMs) / 1000);
+    const elapsed = Math.round((Date.now() - started) / 1000);
     onProgress?.(`Waiting for clone to provision… (${elapsed}s)`);
   }
 
   throw new Error('Timed out waiting for clone to appear — check Cloudways dashboard.');
 }
 
+export type OperationResult = 'completed' | 'timeout' | 'unknown';
+
 /**
  * Poll a Cloudways operation by ID until is_completed === "1".
- * Used for service operations (e.g. Nginx restart) where we do have the op ID.
+ *
+ * Returns how the wait actually ended rather than conflating "completed" with
+ * "gave up" — callers decide whether an inconclusive result is fatal.
  */
 export async function waitForOperation(
   operationId: string,
   onProgress?: (message: string) => void,
   intervalMs = 3000,
   timeoutMs = 60000,
-): Promise<void> {
-  const token = await getAccessToken();
+): Promise<OperationResult> {
   const deadline = Date.now() + timeoutMs;
+  let consecutiveErrors = 0;
 
   while (Date.now() < deadline) {
     await sleep(intervalMs);
 
-    const res = await fetch(`${API_BASE}/operation/${operationId}`, {
-      headers: authHeaders(token),
-    });
-
-    if (!res.ok) {
-      // Operation endpoint can be unreliable — fall back to fixed wait
-      onProgress?.('Waiting for operation…');
-      await sleep(5000);
-      return;
+    let res: Response;
+    try {
+      res = await cwFetch(`/operation/${operationId}`);
+    } catch {
+      if (++consecutiveErrors >= 5) return 'unknown';
+      continue;
     }
 
+    if (!res.ok) {
+      if (++consecutiveErrors >= 5) return 'unknown';
+      onProgress?.('Waiting for operation…');
+      continue;
+    }
+
+    consecutiveErrors = 0;
     const data = await res.json();
     const op = data.operation ?? data;
 
     // Cloudways uses is_completed: "0" / "1" (strings)
-    if (op?.is_completed === '1' || op?.status === 1) return;
+    if (op?.is_completed === '1' || op?.status === 1) return 'completed';
     if (op?.is_failed === '1' || op?.status === -1) {
       throw new Error(`Operation ${operationId} failed`);
     }
@@ -140,13 +195,12 @@ export async function waitForOperation(
     onProgress?.(`${op?.status ?? 'In progress'}…`);
   }
 
-  // Timed out — not fatal for service restarts, just continue
+  return 'timeout';
 }
 
 /**
  * Restart Nginx via the Cloudways API, then confirm the site is reachable.
- * Endpoint: POST /service  { server_id, service_type: "nginx", state: "restart" }
- * Returns an operation ID which we poll until complete.
+ * Endpoint: POST /service/state { server_id, service, state }
  */
 export async function restartNginxAndWait(
   siteUrl: string,
@@ -154,16 +208,15 @@ export async function restartNginxAndWait(
 ): Promise<void> {
   onProgress?.('Restarting Nginx via Cloudways API…');
 
-  try {
-    const token = await getAccessToken();
+  const MAX_RESTART_ATTEMPTS = 3;
 
-    const attemptRestart = async (): Promise<void> => {
-      const res = await fetch(`${API_BASE}/service/state`, {
+  try {
+    // A 422 means another operation holds the server lock. Wait it out and try
+    // again — but bounded, so a permanently stuck server can't stall the run.
+    for (let attempt = 1; attempt <= MAX_RESTART_ATTEMPTS; attempt++) {
+      const res = await cwFetch('/service/state', {
         method: 'POST',
-        headers: {
-          ...authHeaders(token),
-          'Content-Type': 'application/x-www-form-urlencoded',
-        },
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
         body: new URLSearchParams({
           server_id: process.env.CLOUDWAYS_SERVER_ID!,
           service: 'nginx',
@@ -171,28 +224,27 @@ export async function restartNginxAndWait(
         }),
       });
 
-      if (res.status === 422) {
-        const data = await res.json();
+      if (res.status === 422 && attempt < MAX_RESTART_ATTEMPTS) {
+        const data = await res.json().catch(() => ({}));
         const blockingOpId = data.operation?.id;
         if (blockingOpId) {
-          onProgress?.(`Waiting for ongoing operation to finish before restarting Nginx…`);
+          onProgress?.('Waiting for ongoing operation to finish before restarting Nginx…');
           await waitForOperation(String(blockingOpId), onProgress, 5000, 5 * 60 * 1000);
-          onProgress?.('Retrying Nginx restart…');
-          return attemptRestart();
+          onProgress?.(`Retrying Nginx restart (attempt ${attempt + 1}/${MAX_RESTART_ATTEMPTS})…`);
+          continue;
         }
       }
 
       if (!res.ok) {
         const text = await res.text();
-        onProgress?.(`Nginx restart API call failed (${res.status}: ${text}) — will poll until site responds.`);
+        onProgress?.(`Nginx restart API call failed (${res.status}: ${text.slice(0, 120)}) — will poll until site responds.`);
       } else {
-        const data = await res.json();
+        const data = await res.json().catch(() => ({}));
         const status = data.service_status?.status;
         onProgress?.(`Nginx restarted${status ? ` (${status})` : ''}.`);
       }
-    };
-
-    await attemptRestart();
+      break;
+    }
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     onProgress?.(`Nginx restart failed (${msg}) — will poll until site responds.`);
@@ -209,14 +261,11 @@ async function waitForSiteReachable(
   timeoutMs = 3 * 60 * 1000,
 ): Promise<void> {
   const deadline = Date.now() + timeoutMs;
-  let attempts = 0;
+  const started = Date.now();
 
-  onProgress?.(`Waiting for site to be reachable…`);
+  onProgress?.('Waiting for site to be reachable…');
 
   while (Date.now() < deadline) {
-    await sleep(intervalMs);
-    attempts++;
-
     try {
       const res = await fetch(siteUrl, { method: 'HEAD', signal: AbortSignal.timeout(5000) });
       if (res.status > 0) {
@@ -227,20 +276,59 @@ async function waitForSiteReachable(
       // Not up yet — keep polling
     }
 
-    const elapsed = Math.round((attempts * intervalMs) / 1000);
+    await sleep(intervalMs);
+    const elapsed = Math.round((Date.now() - started) / 1000);
     onProgress?.(`Not reachable yet, retrying… (${elapsed}s)`);
   }
 
   throw new Error(`Site at ${siteUrl} did not become reachable within ${timeoutMs / 1000}s.`);
 }
 
-/** Find an app on the template server by label. */
-export async function findAppByLabel(label: string): Promise<CloudwaysApp | null> {
-  const token = await getAccessToken();
+/**
+ * Wait until the cloned site's WordPress REST API answers.
+ *
+ * Nginx answering is not the same as WordPress being ready — the app record
+ * appears in the API before the file copy and DB import finish, so the REST
+ * endpoint is the only honest readiness signal. Without this the branding and
+ * page-creation steps race the import and fail intermittently.
+ */
+export async function waitForWordPressReady(
+  siteUrl: string,
+  onProgress?: (message: string) => void,
+  intervalMs = 8000,
+  timeoutMs = 5 * 60 * 1000,
+): Promise<void> {
+  const deadline = Date.now() + timeoutMs;
+  const started = Date.now();
 
-  const res = await fetch(`${API_BASE}/server?server_id=${encodeURIComponent(process.env.CLOUDWAYS_SERVER_ID!)}`, {
-    headers: authHeaders(token),
-  });
+  onProgress?.('Waiting for WordPress to finish importing…');
+
+  while (Date.now() < deadline) {
+    try {
+      const res = await fetch(`${siteUrl.replace(/\/$/, '')}/wp-json/wp/v2/types`, {
+        signal: AbortSignal.timeout(10000),
+      });
+      // 200 means REST is live. 401/403 also prove WP is answering — the route
+      // exists and is merely refusing anonymous access.
+      if (res.ok || res.status === 401 || res.status === 403) {
+        onProgress?.('WordPress REST API is responding.');
+        return;
+      }
+    } catch {
+      // Still importing — keep polling
+    }
+
+    await sleep(intervalMs);
+    const elapsed = Math.round((Date.now() - started) / 1000);
+    onProgress?.(`WordPress not ready yet… (${elapsed}s)`);
+  }
+
+  throw new Error(`WordPress REST API at ${siteUrl} did not respond within ${timeoutMs / 1000}s.`);
+}
+
+/** List every app on the template server. */
+export async function listApps(): Promise<CloudwaysApp[]> {
+  const res = await cwFetch(`/server?server_id=${encodeURIComponent(process.env.CLOUDWAYS_SERVER_ID!)}`);
 
   if (!res.ok) {
     const text = await res.text();
@@ -253,7 +341,13 @@ export async function findAppByLabel(label: string): Promise<CloudwaysApp | null
   const server = servers.find((s) => s.id === process.env.CLOUDWAYS_SERVER_ID) ?? servers[0];
   if (!server) throw new Error('Template server not found');
 
-  return server.apps?.find((a) => a.label === label) ?? null;
+  return server.apps ?? [];
+}
+
+/** Find an app on the template server by label. */
+export async function findAppByLabel(label: string): Promise<CloudwaysApp | null> {
+  const apps = await listApps();
+  return apps.find((a) => a.label === label) ?? null;
 }
 
 function sleep(ms: number): Promise<void> {

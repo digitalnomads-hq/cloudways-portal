@@ -11,7 +11,7 @@ import { loadForm, saveForm, clearForm, saveClone } from '@/lib/storage';
 // ---------------------------------------------------------------------------
 
 type SseEvent =
-  | { event: 'status'; step: number; message: string }
+  | { event: 'status'; seq: number; step: number; message: string }
   | { event: 'complete'; message: string; siteUrl: string; adminUrl: string; cloudwaysAppId: string }
   | { event: 'error'; message: string; cloudwaysAppId?: string };
 
@@ -354,59 +354,98 @@ export default function Home() {
 
     try {
       const res = await fetch('/api/clone', { method: 'POST', body: formData });
+      const body = await res.json();
 
-      if (!res.ok || !res.body) {
-        throw new Error(`Request failed: ${res.status} ${res.statusText}`);
+      if (!res.ok || !body.jobId) {
+        throw new Error(body.error ?? `Request failed: ${res.status} ${res.statusText}`);
       }
 
-      const reader = res.body.getReader();
-      const decoder = new TextDecoder();
-      let buffer = '';
-
-      while (true) {
-        const { done, value } = await reader.read();
-        if (done) break;
-        buffer += decoder.decode(value, { stream: true });
-
-        const parts = buffer.split('\n\n');
-        buffer = parts.pop() ?? '';
-
-        for (const chunk of parts) {
-          const dataLine = chunk.split('\n').find((l) => l.startsWith('data:'));
-          if (!dataLine) continue;
-          try {
-            const parsed: SseEvent = JSON.parse(dataLine.slice(5).trim());
-            if (parsed.event === 'status') {
-              addMessage(parsed.message);
-            } else if (parsed.event === 'complete') {
-              addMessage(parsed.message);
-              setResult({ siteUrl: parsed.siteUrl, adminUrl: parsed.adminUrl, appId: parsed.cloudwaysAppId });
-              setFormState('complete');
-              const template = templates.find((t) => t.id === selectedTemplate);
-              saveClone({
-                appId: parsed.cloudwaysAppId,
-                siteName: siteNameValue,
-                siteUrl: parsed.siteUrl,
-                adminUrl: parsed.adminUrl,
-                templateId: selectedTemplate,
-                templateName: template?.name ?? selectedTemplate,
-                primaryColor,
-                createdAt: new Date().toISOString(),
-              });
-              clearForm();
-            } else if (parsed.event === 'error') {
-              setErrorMsg(parsed.message);
-              if (parsed.cloudwaysAppId) setPartialAppId(parsed.cloudwaysAppId);
-              setFormState('error');
-            }
-          } catch {
-            // Ignore malformed chunks
-          }
-        }
-      }
+      await followJob(body.jobId);
     } catch (err) {
       setErrorMsg(err instanceof Error ? err.message : String(err));
       setFormState('error');
+    }
+  }
+
+  /**
+   * Consume a job's progress stream, reconnecting from the last seq seen if the
+   * connection drops. The job keeps running server-side regardless, so a
+   * dropped stream is a display problem, not a failed build.
+   */
+  async function followJob(jobId: string) {
+    let cursor = 0;
+    let reconnects = 0;
+    const MAX_RECONNECTS = 60;
+    let finished = false;
+
+    while (!finished) {
+      try {
+        const res = await fetch(`/api/clone/stream?jobId=${encodeURIComponent(jobId)}&from=${cursor}`);
+        if (res.status === 404) throw new Error('Job expired on the server — check the Cloudways dashboard.');
+        if (!res.ok || !res.body) throw new Error(`Stream failed: ${res.status} ${res.statusText}`);
+
+        const reader = res.body.getReader();
+        const decoder = new TextDecoder();
+        let buffer = '';
+
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          buffer += decoder.decode(value, { stream: true });
+
+          const parts = buffer.split('\n\n');
+          buffer = parts.pop() ?? '';
+
+          for (const chunk of parts) {
+            const dataLine = chunk.split('\n').find((l) => l.startsWith('data:'));
+            if (!dataLine) continue; // keepalive comment
+            try {
+              const parsed: SseEvent = JSON.parse(dataLine.slice(5).trim());
+              if (parsed.event === 'status') {
+                cursor = parsed.seq + 1;
+                addMessage(parsed.message);
+              } else if (parsed.event === 'complete') {
+                finished = true;
+                addMessage(parsed.message);
+                setResult({ siteUrl: parsed.siteUrl, adminUrl: parsed.adminUrl, appId: parsed.cloudwaysAppId });
+                setFormState('complete');
+                const template = templates.find((t) => t.id === selectedTemplate);
+                saveClone({
+                  appId: parsed.cloudwaysAppId,
+                  siteName: siteNameValue,
+                  siteUrl: parsed.siteUrl,
+                  adminUrl: parsed.adminUrl,
+                  templateId: selectedTemplate,
+                  templateName: template?.name ?? selectedTemplate,
+                  primaryColor,
+                  createdAt: new Date().toISOString(),
+                });
+                clearForm();
+              } else if (parsed.event === 'error') {
+                finished = true;
+                setErrorMsg(parsed.message);
+                if (parsed.cloudwaysAppId) setPartialAppId(parsed.cloudwaysAppId);
+                setFormState('error');
+              }
+            } catch {
+              // Ignore malformed chunks
+            }
+          }
+        }
+
+        // Stream ended without a terminal event — the connection dropped mid-job.
+        if (!finished) {
+          if (++reconnects > MAX_RECONNECTS) {
+            throw new Error('Lost connection to the build. It may still be running — check the Cloudways dashboard.');
+          }
+          addMessage('Connection dropped — reconnecting…');
+          await new Promise((r) => setTimeout(r, 2000));
+        }
+      } catch (err) {
+        if (++reconnects > MAX_RECONNECTS) throw err;
+        addMessage('Connection dropped — reconnecting…');
+        await new Promise((r) => setTimeout(r, 2000));
+      }
     }
   }
 

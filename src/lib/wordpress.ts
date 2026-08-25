@@ -1,3 +1,5 @@
+import { fetchWithRetry } from './http';
+
 export interface WpCredentials {
   baseUrl: string; // e.g. https://abc123.cloudwaysapps.com
   username: string;
@@ -40,19 +42,38 @@ function basicAuth(username: string, password: string): string {
   return `Basic ${Buffer.from(`${username}:${password}`).toString('base64')}`;
 }
 
-async function wpFetch(
+/**
+ * Single entry point for every WordPress REST call in this app.
+ *
+ * Carries a per-attempt timeout and retries transient failures, which matters
+ * most right after a clone: PHP-FPM on the new app serves 502/503 for a while
+ * before it settles, and without this the first write to land would abort the
+ * whole run.
+ */
+export async function wpFetch(
   creds: WpCredentials,
   path: string,
   options: RequestInit = {},
+  onRetry?: (msg: string) => void,
 ): Promise<Response> {
   const url = `${creds.baseUrl.replace(/\/$/, '')}/wp-json${path}`;
-  return fetch(url, {
-    ...options,
-    headers: {
-      Authorization: basicAuth(creds.username, creds.appPassword),
-      ...(options.headers as Record<string, string>),
+  return fetchWithRetry(
+    url,
+    {
+      ...options,
+      headers: {
+        Authorization: basicAuth(creds.username, creds.appPassword),
+        ...(options.headers as Record<string, string>),
+      },
     },
-  });
+    {
+      timeoutMs: 45000,
+      retries: 4,
+      onRetry: onRetry
+        ? (attempt, reason) => onRetry(`  Retry ${attempt} for ${path} (${reason})`)
+        : undefined,
+    },
+  );
 }
 
 // ------------------------------------------------------------------
@@ -76,14 +97,19 @@ export async function updateSiteSettings(
 // Logo
 // ------------------------------------------------------------------
 
-/** Upload a logo file and return its media ID. */
-export async function uploadLogo(
+async function rasterizeSvg(buffer: Buffer, width = 1024): Promise<Buffer> {
+  const { Resvg } = await import('@resvg/resvg-js');
+  const resvg = new Resvg(buffer, { fitTo: { mode: 'width', value: width } });
+  return Buffer.from(resvg.render().asPng());
+}
+
+async function postMedia(
   creds: WpCredentials,
   buffer: Buffer,
   filename: string,
   mimeType: string,
-): Promise<number> {
-  const res = await wpFetch(creds, '/wp/v2/media', {
+): Promise<Response> {
+  return wpFetch(creds, '/wp/v2/media', {
     method: 'POST',
     headers: {
       'Content-Disposition': `attachment; filename="${filename}"`,
@@ -91,9 +117,39 @@ export async function uploadLogo(
     },
     body: buffer as unknown as BodyInit,
   });
-  if (!res.ok) throw new Error(`Logo upload failed (${res.status}): ${await res.text()}`);
+}
+
+// WordPress core rejects SVG at /wp/v2/media via mime sniffing even when
+// Elementor's "Unfiltered File Uploads" is on (that setting only affects
+// Elementor's own editor/kit flows). Rasterize to PNG and retry.
+async function uploadMediaWithSvgFallback(
+  creds: WpCredentials,
+  buffer: Buffer,
+  filename: string,
+  mimeType: string,
+  errorLabel: string,
+): Promise<number> {
+  let res = await postMedia(creds, buffer, filename, mimeType);
+
+  if (!res.ok && /svg/i.test(mimeType)) {
+    const pngBuffer = await rasterizeSvg(buffer);
+    const pngFilename = filename.replace(/\.svg$/i, '') + '.png';
+    res = await postMedia(creds, pngBuffer, pngFilename, 'image/png');
+  }
+
+  if (!res.ok) throw new Error(`${errorLabel} (${res.status}): ${await res.text()}`);
   const data = await res.json();
   return data.id as number;
+}
+
+/** Upload a logo file and return its media ID. */
+export async function uploadLogo(
+  creds: WpCredentials,
+  buffer: Buffer,
+  filename: string,
+  mimeType: string,
+): Promise<number> {
+  return uploadMediaWithSvgFallback(creds, buffer, filename, mimeType, 'Logo upload failed');
 }
 
 /** Set the uploaded media item as the site logo. */
@@ -112,20 +168,7 @@ export async function uploadFavicon(
   filename: string,
   mimeType: string,
 ): Promise<number> {
-  const res = await wpFetch(creds, '/wp/v2/media', {
-    method: 'POST',
-    headers: {
-      'Content-Disposition': `attachment; filename="${filename}"`,
-      'Content-Type': mimeType,
-    },
-    body: buffer as unknown as BodyInit,
-  });
-  if (!res.ok) {
-    const text = await res.text();
-    throw new Error(`Favicon upload failed (${res.status}): ${text}`);
-  }
-  const data = await res.json();
-  return data.id as number;
+  return uploadMediaWithSvgFallback(creds, buffer, filename, mimeType, 'Favicon upload failed');
 }
 
 export async function setFavicon(creds: WpCredentials, mediaId: number): Promise<void> {
