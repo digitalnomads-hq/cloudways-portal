@@ -113,6 +113,23 @@ export async function getSite(appId: string): Promise<SiteRecord | null> {
   return toRecord(rows[0], null);
 }
 
+/**
+ * Find a previously-created site by name.
+ *
+ * This is the duplicate check that actually works. It used to look for a
+ * Cloudways app whose label matched the slugified site name, but Cloudways
+ * ignores the label we ask for and names every clone "Cloned-<template>", so
+ * that lookup could never match and always reported "no duplicate".
+ */
+export async function findSiteByName(siteName: string): Promise<SiteRecord | null> {
+  const rows = await tryQuery<SiteRow>(
+    `SELECT * FROM sites WHERE lower(trim(site_name)) = lower(trim($1)) LIMIT 1`,
+    [siteName],
+  );
+  if (!rows || rows.length === 0) return null;
+  return toRecord(rows[0], null);
+}
+
 export async function setIndexing(appId: string, indexing: boolean): Promise<void> {
   if (!isDbConfigured()) return;
   await query(`UPDATE sites SET indexing = $2 WHERE app_id = $1`, [appId, indexing]);

@@ -223,14 +223,16 @@ export default function Home() {
 
   // Duplicate site name check
   const checkDuplicate = useCallback(async (name: string) => {
-    const label = name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '').slice(0, 40);
-    if (!label) { setDuplicateWarning(null); return; }
+    const trimmed = name.trim();
+    if (!trimmed) { setDuplicateWarning(null); return; }
     setDuplicateChecking(true);
     try {
-      const res = await fetch(`/api/check-app?label=${encodeURIComponent(label)}`);
+      const res = await fetch(`/api/check-app?name=${encodeURIComponent(trimmed)}`);
       const data = await res.json();
       if (data.exists) {
-        setDuplicateWarning(`An app named "${label}" already exists${data.url ? ` — ${data.url}` : ''}.`);
+        setDuplicateWarning(
+          `You already created a site called "${trimmed}"${data.url ? ` — ${data.url}` : ''}.`,
+        );
       } else {
         setDuplicateWarning(null);
       }

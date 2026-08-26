@@ -1,4 +1,4 @@
-import { cloneApp, waitForClone, restartNginxAndWait, waitForWordPressReady, listApps } from './cloudways';
+import { cloneApp, waitForNewApp, findNewApp, restartNginxAndWait, waitForWordPressReady, listApps } from './cloudways';
 import { configureWordPress, setPluginStates, checkPluginUpdates } from './wordpress';
 import type { ElementorColor, ElementorTypography, ElementorThemeStyles } from './wordpress';
 import { deleteDefaultContent, createStandardPages, configureSiteSettings, createNavMenu } from './wp-setup';
@@ -29,14 +29,6 @@ export interface CloneParams {
   favicon: { buffer: Buffer; filename: string; mimeType: string } | null;
   pluginStates: Record<string, boolean>;
   themeStyles?: ElementorThemeStyles;
-}
-
-export function slugify(name: string): string {
-  return name
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, '-')
-    .replace(/^-|-$/g, '')
-    .slice(0, 40);
 }
 
 /**
@@ -110,28 +102,28 @@ export async function runCloneJob(
       { _id: 'accent',    title: 'Accent',    typography_typography: 'custom', typography_font_family: params.bodyFont,    typography_font_weight: '500' },
     ];
 
-    const appLabel = slugify(params.siteName);
     let appId = resume?.appId ?? '';
     let siteUrl = resume?.siteUrl ?? '';
 
     // ------------------------------------------------------------------
-    // 1. Pre-flight: refuse to clone onto an existing label
+    // 1. Pre-flight: snapshot which apps already exist
     // ------------------------------------------------------------------
     let preExistingIds = new Set<string>();
+    // The template's label as Cloudways knows it, which is not the same as our
+    // display name in TEMPLATES. Only used to disambiguate if two new apps
+    // appear at once.
+    let sourceLabel: string | undefined;
 
     if (shouldRun(PHASE.PREFLIGHT)) {
-      step(1)('Checking for existing apps with this name…');
+      step(1)('Taking a snapshot of existing apps…');
 
+      // Cloudways names every clone "Cloned-<template label>", so the label
+      // cannot tell our new app apart from any other. This snapshot of existing
+      // ids is the only reliable way to identify it afterwards.
       const existingApps = await listApps();
-      const collision = existingApps.find((a) => a.label === appLabel);
-      if (collision) {
-        throw new Error(
-          `An app labelled "${appLabel}" already exists on this server (ID ${collision.id}). ` +
-          `Delete it or choose a different site name — continuing would reconfigure the existing site.`,
-        );
-      }
-      // Snapshot so the poll below can only ever match a genuinely new app.
       preExistingIds = new Set(existingApps.map((a) => a.id));
+      sourceLabel = existingApps.find((a) => a.id === template.appId)?.label?.trim();
+      step(1)(`  ${existingApps.length} apps on the server before cloning.`);
       await completed(PHASE.PREFLIGHT);
     }
 
@@ -156,17 +148,33 @@ export async function runCloneJob(
     // 3. Clone
     // ------------------------------------------------------------------
     if (shouldRun(PHASE.CLONE)) {
-      step(3)(`Cloning "${template.name}" as "${appLabel}"…`);
-      await cloneApp(appLabel, template.appId);
+      step(3)(`Cloning "${template.name}"…`);
+      await cloneApp(template.appId);
       step(3)('Clone started. Waiting for it to provision…');
       await completed(PHASE.CLONE);
     }
 
     // ------------------------------------------------------------------
-    // 4. Wait for cloned app to appear
+    // 4. Wait for the cloned app to appear
     // ------------------------------------------------------------------
     if (shouldRun(PHASE.WAIT_APP)) {
-      const newApp = await waitForClone(appLabel, step(4), { excludeAppIds: preExistingIds });
+      let newApp;
+      try {
+        newApp = await waitForNewApp(preExistingIds, step(4), { templateLabel: sourceLabel });
+      } catch (err) {
+        // The clone may well have succeeded even though we stopped watching.
+        // Make one last attempt to identify it and record it, so the build is
+        // resumable instead of leaving an orphaned app nobody can find.
+        const orphan = await findNewApp(preExistingIds, sourceLabel).catch(() => null);
+        if (orphan) {
+          const orphanUrl = orphan.app_fqdn ? `https://${orphan.app_fqdn}` : `http://${orphan.cname}`;
+          setPartialAppId(job, orphan.id);
+          await attachApp(cpId, orphan.id, orphanUrl).catch(() => {});
+          step(4)(`⚠ Stopped waiting, but the clone does exist (app ${orphan.id}). It has been recorded — you can resume this build.`);
+        }
+        throw err;
+      }
+
       appId = newApp.id;
       siteUrl = newApp.app_fqdn ? `https://${newApp.app_fqdn}` : `http://${newApp.cname}`;
 
@@ -174,7 +182,7 @@ export async function runCloneJob(
       // Attach before anything else can fail, so a build that dies during
       // configuration is still resumable rather than orphaning the app.
       await attachApp(cpId, appId, siteUrl).catch(() => {});
-      step(4)('Clone complete.');
+      step(4)(`Clone complete — app ${appId} (Cloudways label "${newApp.label}").`);
       await completed(PHASE.WAIT_APP);
     } else {
       setPartialAppId(job, appId);

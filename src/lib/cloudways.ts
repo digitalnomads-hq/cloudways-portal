@@ -11,6 +11,7 @@ export interface CloudwaysApp {
   app_fqdn: string;
   is_ssl: string;
   sys_user: string; // Cloudways-generated username — used to derive the WP path on disk
+  created_at?: string; // "YYYY-MM-DD HH:MM:SS" — used to disambiguate concurrent clones
 }
 
 export interface CloudwaysServer {
@@ -75,11 +76,17 @@ async function cwFetch(path: string, init: RequestInit = {}): Promise<Response> 
 /**
  * Clone the template app on the same server.
  *
+ * IMPORTANT: Cloudways does not let you name the clone. /app/clone ignores any
+ * label you pass and names the new app "Cloned-<source label>" — so every clone
+ * of the same template arrives with an identical label. That is why the new app
+ * is identified by id (see waitForNewApp) and why the human-readable name lives
+ * in our own registry rather than in the Cloudways label.
+ *
  * Deliberately not retried: a retried clone that actually succeeded the first
  * time would leave a duplicate app behind, which is worse than surfacing the
  * error.
  */
-export async function cloneApp(newLabel: string, sourceAppId?: string): Promise<void> {
+export async function cloneApp(sourceAppId?: string): Promise<void> {
   const token = await getAccessToken();
 
   const res = await fetchOnce(`${API_BASE}/app/clone`, {
@@ -91,7 +98,6 @@ export async function cloneApp(newLabel: string, sourceAppId?: string): Promise<
     body: new URLSearchParams({
       server_id: process.env.CLOUDWAYS_SERVER_ID!,
       app_id: sourceAppId ?? process.env.CLOUDWAYS_TEMPLATE_APP_ID!,
-      app_label: newLabel,
     }),
   }, 60000);
 
@@ -111,23 +117,48 @@ export async function cloneApp(newLabel: string, sourceAppId?: string): Promise<
  * and letting one of those escape would abort a clone that is already running
  * on their side — orphaning the app. Only a sustained failure run gives up.
  */
-export async function waitForClone(
-  appLabel: string,
+/**
+ * Find any app on the server whose id was not present before we started.
+ *
+ * Identity by id, not by label: Cloudways names every clone
+ * "Cloned-<source label>", so the label carries no information about which app
+ * is ours — matching on it meant the poll never succeeded and the build timed
+ * out while a perfectly good site sat there.
+ */
+export async function findNewApp(
+  preExistingIds: Set<string>,
+  templateLabel?: string,
+): Promise<CloudwaysApp | null> {
+  const candidates = (await listApps()).filter((a) => !preExistingIds.has(a.id));
+  if (candidates.length === 0) return null;
+  if (candidates.length === 1) return candidates[0];
+
+  // More than one new app means something else created one at the same time
+  // (another portal build, or someone in the Cloudways dashboard). Prefer the
+  // one that looks like our clone, then the newest.
+  const expected = templateLabel ? `cloned-${templateLabel.trim().toLowerCase()}` : null;
+  const looksLikeOurs = candidates.filter(
+    (a) => a.label?.trim().toLowerCase() === expected,
+  );
+  const pool = looksLikeOurs.length > 0 ? looksLikeOurs : candidates;
+
+  return [...pool].sort((a, b) => (a.created_at ?? '').localeCompare(b.created_at ?? '')).pop() ?? null;
+}
+
+export async function waitForNewApp(
+  preExistingIds: Set<string>,
   onProgress?: (message: string) => void,
-  options: { excludeAppIds?: Set<string>; intervalMs?: number; timeoutMs?: number } = {},
+  options: { templateLabel?: string; intervalMs?: number; timeoutMs?: number } = {},
 ): Promise<CloudwaysApp> {
-  const { excludeAppIds, intervalMs = 10000, timeoutMs = 15 * 60 * 1000 } = options;
+  const { templateLabel, intervalMs = 10000, timeoutMs = 15 * 60 * 1000 } = options;
   const deadline = Date.now() + timeoutMs;
   const started = Date.now();
   let consecutiveErrors = 0;
 
   while (Date.now() < deadline) {
     try {
-      const app = await findAppByLabel(appLabel);
-      // Only accept an app that did not exist before we started. A leftover app
-      // from an earlier failed run shares the label, and matching it would mean
-      // silently reconfiguring the wrong site.
-      if (app && !excludeAppIds?.has(app.id)) return app;
+      const app = await findNewApp(preExistingIds, templateLabel);
+      if (app) return app;
       consecutiveErrors = 0;
     } catch (err) {
       consecutiveErrors++;
