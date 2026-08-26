@@ -11,8 +11,13 @@ import { dbStatus } from '@/lib/db';
 
 export const dynamic = 'force-dynamic';
 
+// Render injects the deployed commit; the generic name is for anywhere else.
+// Reported so it is possible to tell which build is actually serving, rather
+// than inferring it from behaviour.
+const COMMIT = (process.env.RENDER_GIT_COMMIT ?? process.env.GIT_COMMIT ?? 'unknown').slice(0, 7);
+
 export async function GET(req: NextRequest) {
-  const base = { ok: true, activeJobs: activeJobCount() };
+  const base = { ok: true, commit: COMMIT, activeJobs: activeJobCount() };
 
   if (req.nextUrl.searchParams.get('db') !== '1') {
     return NextResponse.json(base);
